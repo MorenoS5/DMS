@@ -1,0 +1,3035 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registre Véhicules</title>
+<!-- Codes QR. Le 22/09/2026 on est passé de `qrcodejs` (qui dessine un canvas
+     dans un élément du DOM) à `qrcode-generator` (calcul pur : il rend la
+     matrice, on dessine le SVG). Deux raisons : un SVG reste net à
+     l'impression, où un canvas de 128 px agrandi à 40 mm se lit mal sous un
+     pare-brise ; et c'est désormais LA MÊME bibliothèque que l'Outil terrain,
+     donc une de moins sur le site plutôt qu'une de plus. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  :root{
+    --bg:#1d3d52;
+    --surface:#26495d;
+    --ink:#f4f6f7;
+    --ink-soft:#a0b3be;
+    --line:#3a5c6f;
+    --brand-green:#6fb52c;
+    --brand-green-dark:#86c93f;
+    --brand-dark:#12303f;
+    --accent-live:#f2a33c;
+    --accent-live-bg:rgba(242,163,60,.15);
+    --accent-done:#3ecf8e;
+    --accent-done-bg:rgba(62,207,142,.15);
+    --accent-alert:#ff6464;
+    --accent-alert-bg:rgba(255,100,100,.12);
+    --plate-band:#1E3A6E;
+    --navy-2:#16303f;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+    border-top:3px solid var(--brand-green);
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px 80px;}
+  header.top{
+    display:flex;justify-content:space-between;align-items:center;
+    margin:0 0 24px;flex-wrap:wrap;gap:14px;
+    padding:20px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .brand-id{display:flex;align-items:center;gap:12px;}
+  .company-logo{max-height:40px;width:auto;display:block;}
+  .brand-mark{
+    width:38px;height:38px;border-radius:9px;background:var(--brand-green);
+    color:var(--brand-dark);font-family:'Space Grotesk',sans-serif;font-weight:700;
+    display:flex;align-items:center;justify-content:center;font-size:1.05rem;letter-spacing:-0.02em;
+    flex-shrink:0;box-shadow:0 2px 10px rgba(111,181,44,.35);
+  }
+  header.top h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:1.4rem;font-weight:700;margin:0;letter-spacing:-0.01em;color:var(--ink);
+  }
+  header.top .sub{color:var(--ink-soft);font-size:0.78rem;margin-top:2px;font-weight:500;letter-spacing:0.02em;font-family:'JetBrains Mono',monospace;}
+  .live-counter{
+    display:flex;align-items:center;gap:8px;
+    background:var(--accent-live-bg);color:var(--accent-live);
+    border:1px solid rgba(242,163,60,.35);
+    border-radius:999px;padding:7px 14px;
+    font-family:'JetBrains Mono',monospace;font-size:0.82rem;font-weight:600;
+  }
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--accent-live);
+    animation:pulse 1.6s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  /* Meme precaution qu au-dessus : max-width + wrap, pour qu un onglet ne
+     puisse pas sortir du cadre le jour ou on en ajoute un. */
+  nav.tabs{display:flex;flex-wrap:wrap;gap:4px;margin:24px 0 22px;background:var(--navy-2);padding:4px;border-radius:10px;width:fit-content;max-width:100%;}
+  nav.tabs button{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:0.85rem;
+    background:transparent;border:none;padding:8px 16px;cursor:pointer;border-radius:7px;
+    color:var(--ink-soft);transition:.15s;
+  }
+  nav.tabs button.active{background:var(--brand-green);color:var(--brand-dark);}
+  nav.tabs button .count{
+    font-family:'JetBrains Mono',monospace;font-weight:500;font-size:0.75rem;
+    background:rgba(0,0,0,.15);color:inherit;border-radius:8px;padding:1px 7px;margin-left:6px;
+  }
+  section{display:none;}
+  section.active{display:block;}
+
+  /* wrap, et non nowrap : six onglets ne tiennent pas sur la largeur d un
+     telephone. Sans cela « Comptes » et « Historique » sortaient du cadre
+     sans aucun moyen de les atteindre — constate le 02/10/2026. */
+  nav.subtabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;}
+  nav.subtabs button{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:0.82rem;
+    background:var(--surface);border:1px solid var(--line);color:var(--ink-soft);
+    border-radius:999px;padding:7px 16px;cursor:pointer;
+  }
+  nav.subtabs button.active{background:var(--brand-green);color:var(--brand-dark);border-color:var(--brand-green);}
+  .gpanel{display:none;}
+  .gpanel.active{display:block;}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+  .field-row.three{grid-template-columns:0.7fr 1fr 1fr;}
+  .field{display:flex;flex-direction:column;gap:5px;}
+  .field.full{grid-column:1 / -1;}
+  label{font-size:0.78rem;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.03em;}
+  input[type=text],input[type=datetime-local],select,textarea{
+    font-family:'Inter',sans-serif;font-size:0.92rem;padding:9px 10px;
+    border:1px solid var(--line);border-radius:8px;background:var(--navy-2);color:var(--ink);
+  }
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--plate-band);outline-offset:1px;}
+  textarea{resize:vertical;min-height:56px;font-family:'Inter',sans-serif;}
+  .plaque-input{font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.05em;}
+  .init-input{font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.05em;}
+
+  button.primary{
+    font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:0.9rem;
+    background:var(--brand-green);color:var(--brand-dark);border:none;border-radius:8px;
+    padding:11px 20px;cursor:pointer;
+  }
+  button.primary:hover{background:var(--brand-green-dark);}
+  button.secondary{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:0.85rem;
+    background:var(--navy-2);color:var(--ink);border:1px solid var(--line);border-radius:7px;
+    padding:8px 14px;cursor:pointer;
+  }
+  button.secondary:hover{border-color:var(--brand-green);}
+  button.link{background:none;border:none;color:var(--ink-soft);font-size:0.78rem;cursor:pointer;text-decoration:underline;padding:0;}
+
+  /* Plate badge — signature element */
+  .plate{
+    display:inline-flex;align-items:stretch;height:30px;border-radius:5px;overflow:hidden;
+    border:1.5px solid #16233F;font-family:'JetBrains Mono',monospace;font-weight:600;
+    box-shadow:0 2px 8px rgba(0,0,0,0.35);
+  }
+  .plate .band{background:var(--plate-band);color:#fff;font-size:0.55rem;line-height:1.05;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 5px;}
+  .plate .stars{font-size:0.5rem;letter-spacing:1px;}
+  .plate .num{background:#fff;color:#16233F;padding:0 10px;display:flex;align-items:center;font-size:0.95rem;letter-spacing:0.04em;}
+
+  /* Driver initials chip */
+  .chip{
+    display:inline-flex;align-items:center;justify-content:center;min-width:36px;height:26px;padding:0 9px;
+    border-radius:6px;background:var(--navy-2);color:var(--ink);border:1px solid var(--line);font-family:'JetBrains Mono',monospace;
+    font-weight:600;font-size:0.8rem;letter-spacing:0.03em;
+  }
+  .fullname{font-size:0.85rem;color:var(--ink-soft);}
+
+  .trip-card{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:12px;background:var(--surface);}
+  .trip-card.live{border-left:4px solid var(--accent-live);}
+  .trip-top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;}
+  .trip-meta{font-size:0.85rem;color:var(--ink-soft);display:flex;flex-wrap:wrap;gap:6px 16px;margin-bottom:6px;align-items:center;}
+  .trip-meta b{color:var(--ink);font-weight:600;}
+  .duree{font-family:'JetBrains Mono',monospace;font-size:0.8rem;background:var(--accent-live-bg);color:var(--brand-green-dark);
+    padding:3px 9px;border-radius:5px;}
+  .motif{font-size:0.88rem;margin-top:4px;color:var(--ink);}
+  .signal-badge{display:inline-block;font-size:0.75rem;background:var(--accent-alert-bg);color:var(--accent-alert);
+    padding:2px 8px;border-radius:5px;margin-top:6px;font-weight:600;}
+
+  .actions-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+  .return-form{margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);}
+  .signal-toggle textarea{margin-top:8px;}
+
+  .empty{color:var(--ink-soft);font-size:0.9rem;padding:30px 10px;text-align:center;}
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+  .filters input,.filters select{flex:1;min-width:160px;}
+  .status-done{font-size:0.72rem;font-weight:600;color:var(--accent-done);background:var(--accent-done-bg);
+    padding:2px 8px;border-radius:5px;}
+
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+  .card h3{font-family:'Space Grotesk',sans-serif;font-size:1.02rem;margin:0 0 14px;}
+  .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);gap:10px;}
+  .row-item:last-child{border-bottom:none;}
+  .row-item .left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .add-row{display:flex;gap:10px;margin-bottom:16px;}
+  .add-row input{flex:1;}
+  .note{font-size:0.78rem;color:var(--ink-soft);margin-top:24px;line-height:1.5;}
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:rgba(8,16,22,0.65);
+    align-items:center;justify-content:center;z-index:1000;padding:20px;
+  }
+  .modal-box{
+    background:var(--surface);border-radius:14px;padding:22px 22px 18px;
+    max-width:420px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,0.25);
+  }
+  .modal-message{font-size:0.92rem;color:var(--ink);white-space:pre-line;line-height:1.5;margin-bottom:18px;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;}
+  @media (max-width:560px){
+    .field-row{grid-template-columns:1fr;}
+    .field-row.three{grid-template-columns:1fr;}
+  }
+
+  /* ---- Accessibilité ---- */
+  .visually-hidden{
+    position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+  }
+  .skip-link{
+    position:absolute;left:8px;top:-48px;z-index:2000;background:var(--brand-green);
+    color:var(--brand-dark);padding:10px 16px;border-radius:8px;font-weight:700;
+    font-family:'Space Grotesk',sans-serif;transition:top .15s;text-decoration:none;
+  }
+  .skip-link:focus{top:8px;}
+  :focus-visible{outline:3px solid var(--brand-green-dark);outline-offset:2px;}
+  /* Contraste renforcé pour les liens d'action */
+  button.link:focus-visible{outline-offset:3px;}
+
+  /* ---- Bannière hors-ligne / synchro ---- */
+  .netbar{
+    display:none;align-items:center;gap:10px;justify-content:center;
+    font-family:'JetBrains Mono',monospace;font-size:0.8rem;font-weight:600;
+    padding:8px 14px;border-radius:0;text-align:center;
+  }
+  .netbar.show{display:flex;}
+  .netbar.offline{background:var(--accent-alert-bg);color:var(--accent-alert);border-bottom:1px solid rgba(255,100,100,.35);}
+  .netbar.syncing{background:var(--accent-live-bg);color:var(--accent-live);border-bottom:1px solid rgba(242,163,60,.35);}
+  .netbar .qcount{background:rgba(0,0,0,.18);border-radius:8px;padding:1px 8px;}
+
+  /* ---- Toasts ---- */
+  .toast-wrap{position:fixed;left:0;right:0;bottom:20px;display:flex;flex-direction:column;
+    align-items:center;gap:8px;z-index:1500;pointer-events:none;padding:0 12px;}
+  .toast{
+    pointer-events:auto;max-width:440px;width:100%;background:var(--surface);
+    border:1px solid var(--line);border-left:4px solid var(--brand-green);
+    border-radius:10px;padding:12px 14px;font-size:0.88rem;color:var(--ink);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);animation:toastIn .2s ease;
+  }
+  .toast.error{border-left-color:var(--accent-alert);}
+  .toast.warn{border-left-color:var(--accent-live);}
+  @keyframes toastIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important;}
+    .live-dot{animation:none;}
+  }
+
+  /* État du véhicule et photos — 23/09/2026 */
+  .etat-resume{font-size:13px;line-height:1.5;opacity:.85;margin-top:6px;}
+  .photos-bande{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .photo-vignette{margin:0;width:104px;}
+  .photo-vignette img{width:104px;height:104px;object-fit:cover;border-radius:8px;display:block;}
+  .photo-vignette figcaption{font-size:11px;margin-top:3px;line-height:1.3;}
+  .photo-absente{width:104px;height:104px;border-radius:8px;display:flex;align-items:center;
+                 justify-content:center;text-align:center;font-size:11px;padding:6px;
+                 border:1px dashed currentColor;opacity:.6;}
+</style>
+<!-- En-tete de marque : masque quand le Registre est ouvert DEPUIS l Outil
+     terrain (iframe blob:), ou l application affiche deja son propre en-tete et
+     ou un second titre ferait doublon ; visible quand la page est ouverte
+     directement, ou il est le seul repere de marque et le seul endroit d ou l on
+     se deconnecte. Etait un display:none inconditionnel jusqu au 09/09/2026 :
+     la page seule s ouvrait donc sans titre ni logo. Une seule source, deux
+     usages — pas de copie a maintenir en parallele. -->
+<script>
+try { if (window.self !== window.top) document.documentElement.classList.add("rv-embarque"); }
+catch (e) { document.documentElement.classList.add("rv-embarque"); }
+</script>
+<style>html.rv-embarque .brand-id{display:none !important;}</style>
+<!-- Embarque, l application fournit deja l en-tete et la deconnexion. Regle
+     separee, et non ajoutee a celle du dessus, parce que le controle de
+     assemble_registre.js cherche une regle dont le selecteur se termine par
+     .brand-id : l allonger la lui ferait manquer. -->
+<style>html.rv-embarque #btnAppLogout,html.rv-embarque #appWhoami{display:none !important;}</style>
+<!-- Embarque, l application fournit deja la colonne, la marge et le fond :
+     le Registre ne doit pas en ajouter une seconde serie. Sans ces regles on
+     obtient une colonne de 920 px centree DANS le cadre de l application,
+     sur son propre fond — l effet « fenetre dans une fenetre » signale le
+     07/10/2026. Ouvert seul, rien ne change : tout est porte par
+     html.rv-embarque.
+
+     Regle a part, et non fondue dans celles du dessus, pour la meme raison
+     qu elles sont deja separees : le controle de assemble_registre.js cherche
+     un selecteur qui se TERMINE par .brand-id, et l allonger le lui ferait
+     manquer. -->
+<style>
+  html.rv-embarque, html.rv-embarque body{background:transparent;}
+  html.rv-embarque .wrap{max-width:none;padding:0 4px 24px;}
+  html.rv-embarque header.top{padding:0;margin:0 0 12px;}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#tab-nouveau">Aller au contenu principal</a>
+<div class="netbar" id="netbar" role="status" aria-live="polite"></div>
+<div class="wrap">
+
+  <!-- Reprise de session. Affiché à la place du formulaire tant que l'on ne
+       sait pas encore s'il y a une session : le verrou d'authentification est
+       partagé avec l'Outil terrain qui affiche cette page en iframe, et il
+       peut mettre une seconde à rendre la main. Montrer le formulaire pendant
+       ce temps faisait saisir un mot de passe pour rien. -->
+  <div class="card" id="appReprise" style="max-width:400px;margin:40px auto;display:none;">
+    <h3>Registre Véhicules</h3>
+    <div class="sub">Reprise de votre session…</div>
+  </div>
+
+  <div class="card" id="appLoginGate" style="max-width:400px;margin:40px auto;display:none;">
+    <h3>Registre Véhicules</h3>
+    <div class="sub" style="margin-bottom:16px;">Accès réservé aux chefs d'équipe et gestionnaires.</div>
+    <div class="field-row" style="grid-template-columns:1fr;">
+      <div class="field">
+        <label for="appLoginUser">Matricule ou adresse e-mail</label>
+        <input type="text" id="appLoginUser" autocomplete="username" placeholder="Votre matricule">
+      </div>
+      <div class="field">
+        <label for="appLoginPass">Mot de passe</label>
+        <input type="password" id="appLoginPass" autocomplete="current-password" placeholder="Mot de passe">
+      </div>
+    </div>
+    <div class="signal-badge" id="appLoginError" role="alert" style="display:none;margin-bottom:12px;">Identifiant ou mot de passe incorrect.</div>
+    <button class="primary" id="btnAppLogin" style="width:100%;">Se connecter</button>
+  </div>
+
+  <header class="top">
+    <div class="brand-id">
+      <img id="company-logo" class="company-logo" alt="Sales-Lentz" style="display:none;">
+      <div class="brand-fallback" id="brand-fallback">
+        <div class="brand-mark">SL</div>
+      </div>
+      <div>
+        <h1>Registre Véhicules</h1>
+        <div class="sub">Sales-Lentz — Moving people, moving you.</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <span class="sub" id="appWhoami" style="display:none;"></span>
+      <button class="secondary" id="btnMonMdp" style="display:none;">Mon mot de passe</button>
+      <button class="secondary" id="btnAppLogout" style="display:none;">Se déconnecter</button>
+    </div>
+    <div class="live-counter" role="status" aria-live="polite"><span class="live-dot" aria-hidden="true"></span><span id="liveCount">0 véhicule(s) en circulation</span></div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Sections du registre">
+    <button data-tab="nouveau" class="active" role="tab" id="tabbtn-nouveau" aria-selected="true" aria-controls="tab-nouveau">Nouveau trajet</button>
+    <button data-tab="live" role="tab" id="tabbtn-live" aria-selected="false" aria-controls="tab-live" tabindex="-1">En cours <span class="count" id="tabLiveCount">0</span></button>
+    <button data-tab="reservations" role="tab" id="tabbtn-reservations" aria-selected="false" aria-controls="tab-reservations" tabindex="-1">Réservations <span class="count" id="tabResaCount">0</span></button>
+    <button data-tab="historique" role="tab" id="tabbtn-historique" aria-selected="false" aria-controls="tab-historique" tabindex="-1">Historique <span class="count" id="tabHistCount">0</span></button>
+    <button data-tab="gestionnaire" role="tab" id="tabbtn-gestionnaire" aria-selected="false" aria-controls="tab-gestionnaire" tabindex="-1">Gestionnaire</button>
+  </nav>
+
+  <section id="tab-nouveau" class="active" role="tabpanel" aria-labelledby="tabbtn-nouveau" tabindex="0">
+    <div class="card">
+      <div class="field-row">
+        <div class="field">
+          <label for="plaqueSelect">Plaque d'immatriculation</label>
+          <select id="plaqueSelect"></select>
+          <input type="text" id="plaqueManuel" class="plaque-input" placeholder="Saisir la plaque manuellement" style="display:none;margin-top:7px;">
+        </div>
+        <div class="field">
+          <label for="chauffeurSelect">Numéro Team</label>
+          <select id="chauffeurSelect"></select>
+          <input type="text" id="chauffeurManuel" class="init-input" placeholder="Saisir un numéro Team manuellement" style="display:none;margin-top:7px;">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="lieuDepart">Lieu de départ</label>
+          <select id="lieuDepart"></select>
+        </div>
+        <div class="field">
+          <label for="heureDepart">Heure de départ</label>
+          <input type="datetime-local" id="heureDepart">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field full">
+          <label for="motif">Motif de la prise du véhicule</label>
+          <input type="text" id="motif" placeholder="Ex : livraison Findel, rendez-vous client…">
+        </div>
+      </div>
+      <button class="primary" id="btnStart">Démarrer le trajet</button>
+    </div>
+    <p class="note">Le trajet apparaît immédiatement dans « En cours » dès son démarrage. Seules les initiales du chauffeur y sont affichées.</p>
+  </section>
+
+  <section id="tab-live" role="tabpanel" aria-labelledby="tabbtn-live" tabindex="0">
+    <div id="liveList" role="region" aria-label="Véhicules en circulation" aria-live="polite"></div>
+  </section>
+
+  <section id="tab-reservations" role="tabpanel" aria-labelledby="tabbtn-reservations" tabindex="0">
+    <div class="card" style="margin-bottom:20px;">
+      <h3>Réserver un véhicule à l'avance</h3>
+      <div class="field-row">
+        <div class="field">
+          <label for="resaPlaqueSelect">Plaque</label>
+          <select id="resaPlaqueSelect"></select>
+          <input type="text" id="resaPlaqueManuel" class="plaque-input" placeholder="Saisir la plaque manuellement" style="display:none;margin-top:7px;">
+        </div>
+        <div class="field">
+          <label for="resaChauffeurSelect">Numéro Team</label>
+          <select id="resaChauffeurSelect"></select>
+          <input type="text" id="resaChauffeurManuel" class="init-input" placeholder="Saisir un numéro Team manuellement" style="display:none;margin-top:7px;">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="resaDebut">Début de la réservation</label>
+          <input type="datetime-local" id="resaDebut">
+        </div>
+        <div class="field">
+          <label for="resaFin">Fin prévue</label>
+          <input type="datetime-local" id="resaFin">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="resaLieuDepart">Lieu de départ prévu</label>
+          <select id="resaLieuDepart"></select>
+        </div>
+        <div class="field">
+          <label for="resaMotif">Motif</label>
+          <input type="text" id="resaMotif" placeholder="Ex : déplacement client, formation…">
+        </div>
+      </div>
+      <button class="primary" id="btnReserve">Réserver le véhicule</button>
+    </div>
+    <div id="reservationList" role="region" aria-label="Réservations à venir"></div>
+    <p class="note">Une réservation bloque un créneau à titre indicatif ; un avertissement s'affiche en cas de chevauchement avec une autre réservation sur le même véhicule.</p>
+  </section>
+
+  <!-- HISTORIQUE — remonte des sous-onglets du gestionnaire le 02/10/2026.
+       Il y etait le sixieme d une rangee qui debordait, donc inatteignable sur
+       un telephone. Un ecran qu on consulte souvent ne se range pas au fond
+       d un panneau d administration.
+
+       L ONGLET RESTE RESERVE AUX GESTIONNAIRES, comme l etait le panneau qui
+       le contenait. Deplacer un ecran ne doit pas elargir en silence le
+       nombre de gens qui voient qui a conduit quoi et quand. La RLS, elle,
+       laisserait lire ces trajets a tout detenteur de l acces Registre :
+       ouvrir l onglet a eux tiendrait en une ligne, mais c est une decision,
+       pas un effet de bord. -->
+  <section id="tab-historique" role="tabpanel" aria-labelledby="tabbtn-historique" tabindex="0">
+    <div class="toolbar">
+      <div class="filters" style="flex:1;">
+        <input type="text" id="filterText" placeholder="Filtrer par plaque, initiales, nom ou motif…">
+        <select id="filterLieu"><option value="">Tous les lieux</option></select>
+      </div>
+      <button class="secondary" id="btnExport">Exporter CSV</button>
+    </div>
+    <div class="card" id="historyCard">
+      <div id="historyList" role="region" aria-label="Historique des trajets"></div>
+    </div>
+    <p class="note">L'historique conserve automatiquement les 6 derniers mois de trajets terminés.</p>
+  </section>
+
+  <section id="tab-gestionnaire" role="tabpanel" aria-labelledby="tabbtn-gestionnaire" tabindex="0">
+    <div class="card" id="gestLoginGate" style="max-width:380px;margin:0 auto;">
+      <h3>Accès Gestionnaire</h3>
+      <div class="field-row" style="grid-template-columns:1fr;">
+        <div class="field">
+          <label for="gestLoginUser">Adresse e-mail</label>
+          <input type="email" id="gestLoginUser" autocomplete="username" placeholder="gestionnaire@sales-lentz.lu">
+        </div>
+        <div class="field">
+          <label for="gestLoginPass">Mot de passe</label>
+          <input type="password" id="gestLoginPass" autocomplete="current-password" placeholder="Mot de passe">
+        </div>
+      </div>
+      <div class="signal-badge" id="gestLoginError" role="alert" style="display:none;margin-bottom:12px;">Identifiant ou mot de passe incorrect.</div>
+      <button class="primary" id="btnGestLogin" style="width:100%;">Se connecter</button>
+    </div>
+
+    <div id="gestContent" style="display:none;">
+      <div class="toolbar" style="margin-bottom:18px;">
+        <div></div>
+        <button class="secondary" id="btnGestLogout">Se déconnecter</button>
+      </div>
+      <nav class="subtabs" role="tablist" aria-label="Sections gestionnaire">
+        <button data-gtab="vehicules" class="active" role="tab" id="gtabbtn-vehicules" aria-selected="true" aria-controls="gtab-vehicules">Véhicules</button>
+        <button data-gtab="chauffeurs" role="tab" id="gtabbtn-chauffeurs" aria-selected="false" aria-controls="gtab-chauffeurs" tabindex="-1">Teams</button>
+        <button data-gtab="lieux" role="tab" id="gtabbtn-lieux" aria-selected="false" aria-controls="gtab-lieux" tabindex="-1">Lieux</button>
+        <button data-gtab="qrcode" role="tab" id="gtabbtn-qrcode" aria-selected="false" aria-controls="gtab-qrcode" tabindex="-1">QR Code</button>
+        <button data-gtab="comptes" role="tab" id="gtabbtn-comptes" aria-selected="false" aria-controls="gtab-comptes" tabindex="-1">Comptes</button>
+      </nav>
+
+      <div class="gpanel active" id="gtab-vehicules" role="tabpanel" aria-labelledby="gtabbtn-vehicules" tabindex="0">
+        <div class="card">
+          <h3>Véhicules enregistrés</h3>
+          <div class="add-row">
+            <input type="text" id="newVehiculePlaque" class="plaque-input" placeholder="AB 1234">
+            <button class="secondary" id="btnAddVehicule">Ajouter au système</button>
+          </div>
+          <div id="vehiculeList" role="region" aria-label="Liste des véhicules"></div>
+          <p class="note" style="margin-top:14px;">Les véhicules ajoutés ici apparaissent dans la liste déroulante de « Nouveau trajet ». La saisie manuelle reste toujours possible.</p>
+        </div>
+      </div>
+
+      <div class="gpanel" id="gtab-chauffeurs" role="tabpanel" aria-labelledby="gtabbtn-chauffeurs" tabindex="0">
+        <div class="card">
+          <h3>Numéros Team</h3>
+          <p class="note" style="margin-top:0;">Les chauffeurs choisissent leur numéro Team dans la liste (ou le saisissent manuellement) depuis « Nouveau trajet ». Définissez ici la plage disponible.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="teamMinInput">Team de</label>
+              <input type="text" id="teamMinInput" placeholder="1">
+            </div>
+            <div class="field">
+              <label for="teamMaxInput">Team à</label>
+              <input type="text" id="teamMaxInput" placeholder="60">
+            </div>
+          </div>
+          <button class="secondary" id="btnUpdateTeamRange">Mettre à jour la plage</button>
+          <p class="note" id="teamRangeCurrent"></p>
+        </div>
+        <div class="card">
+          <h3>Durée de conservation</h3>
+          <p class="note" style="margin-top:0;">Les trajets terminés et les réservations passées sont effacés automatiquement chaque nuit au-delà de cette durée (décision du sponsor : 3 mois, à valider par le DPO). Exportez l'historique en CSV avant si vous devez le garder.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="retentionInput">Conserver (mois)</label>
+              <input type="text" id="retentionInput" inputmode="numeric" placeholder="3">
+            </div>
+          </div>
+          <button class="secondary" id="btnUpdateRetention">Mettre à jour la durée</button>
+          <p class="note" id="retentionCurrent"></p>
+        </div>
+      </div>
+
+      <div class="gpanel" id="gtab-lieux" role="tabpanel" aria-labelledby="gtabbtn-lieux" tabindex="0">
+        <div class="card">
+          <h3>Lieux enregistrés</h3>
+          <div class="add-row">
+            <input type="text" id="newLieuNom" placeholder="Ex : Kirchberg">
+            <button class="secondary" id="btnAddLieu">Ajouter au système</button>
+          </div>
+          <div id="lieuxList" role="region" aria-label="Liste des lieux"></div>
+          <p class="note" style="margin-top:14px;">Les lieux ajoutés ici apparaissent dans toutes les listes déroulantes de lieux (départ, arrivée, réservations, filtres).</p>
+        </div>
+      </div>
+
+      <div class="gpanel" id="gtab-qrcode" role="tabpanel" aria-labelledby="gtabbtn-qrcode" tabindex="0">
+        <div class="card" style="text-align:center;">
+          <h3>QR code d'accès à l'appli</h3>
+          <p class="note" style="margin-top:0;">À imprimer et afficher au dépôt — scanner ce code ouvre directement le registre sur ce lien.</p>
+          <div id="qrcode" style="display:inline-block;padding:12px;background:#fff;border-radius:10px;margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <div class="gpanel" id="gtab-comptes" role="tabpanel" aria-labelledby="gtabbtn-comptes" tabindex="0">
+        <!-- DMS cars, 08/10/2026 : la CREATION de comptes est remise ici.
+             Dans l'Outil terrain elle avait ete retiree le 07/10/2026 au profit
+             de l'ecran Chauffeurs de l'application ; DMS cars est une
+             application a part, avec sa propre base : sans ce formulaire, aucun
+             compte ne pourrait y etre cree. Les controles (identifiant, 8
+             caracteres, 72 octets, fuites connues) restent ceux de
+             `manage-chauffeurs`, cote serveur. -->
+        <div class="card">
+          <h3>Créer un compte</h3>
+          <div class="field-row">
+            <div class="field">
+              <label for="nouveauMatricule">Matricule (identifiant)</label>
+              <input type="text" id="nouveauMatricule" autocomplete="off" placeholder="12345">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="nouveauRole">Rôle</label>
+              <select id="nouveauRole">
+                <option value="chef" selected>Chef d'équipe</option>
+                <option value="gestionnaire">Gestionnaire</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="nouvelleTeam">Team</label>
+              <input type="text" id="nouvelleTeam" inputmode="numeric" autocomplete="off" placeholder="ex. 18 — facultatif">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="nouveauMotDePasse">Mot de passe</label>
+              <input type="text" id="nouveauMotDePasse" autocomplete="new-password" placeholder="vide = généré (ex. muvi94)">
+            </div>
+          </div>
+          <button class="primary" id="btnCreerCompte">Créer le compte</button>
+          <p class="note" style="margin-bottom:0;">
+            Connexion ensuite au matricule et à ce mot de passe. Lettres sans
+            accent, chiffres, point, tiret ou soulignement pour le matricule.
+            Laissé vide, le mot de passe est généré simplement (deux syllabes et
+            deux chiffres). Un mot de passe présent dans une fuite connue est refusé.
+          </p>
+        </div>
+
+        <div class="card">
+          <h3>Créer les chefs d'équipe par Team</h3>
+          <p class="note" style="margin-top:0;">
+            Une ligne par Team, au format <b>numéro;nom</b> — par exemple
+            <b>18;Dupont Jean</b>, ou les deux colonnes d'un tableau. L'identifiant
+            est <b>team</b> suivi du numéro (team18) et le mot de passe est généré ;
+            un troisième champ facultatif l'impose. Une Team marquée « - » reçoit
+            aussi son compte. <b>Les noms ne sont pas envoyés en ligne</b> : ils
+            restent dans ce navigateur, le temps de la session, pour l'affichage.
+          </p>
+          <div class="field full">
+            <label for="lotComptes">Liste</label>
+            <textarea id="lotComptes" rows="6" autocomplete="off" placeholder="18;Dupont Jean&#10;19;Martin Claire"></textarea>
+          </div>
+          <button class="primary" id="btnCreerLot">Créer les comptes</button>
+          <div id="lotResultat" style="margin-top:12px;"></div>
+        </div>
+
+        <!-- Apercu des Teams et export CSV, SANS mots de passe (retires le
+             08/10/2026 a l'issue de l'evaluation de maturite). Les mots de
+             passe ne s'affichent qu'une fois, dans #mdpUneFois. -->
+        <div class="card" id="mdpUneFois" style="display:none;"></div>
+
+        <div class="card">
+          <h3>Teams et identifiants</h3>
+          <div class="add-row">
+            <button class="secondary" id="btnRafraichirTeams">Rafraîchir</button>
+            <button class="primary" id="btnExporterTeams">Exporter en CSV</button>
+            <button class="secondary" id="btnRegenererMdp">Nouveaux mots de passe pour tous les chefs</button>
+          </div>
+          <div class="field" style="margin-bottom:12px;">
+            <label for="fichierNoms">Noms des chefs d'équipe (liste locale, jamais envoyée)</label>
+            <input type="file" id="fichierNoms" accept=".txt,.csv,text/plain,text/csv">
+          </div>
+          <p class="note" style="margin-top:0;">
+            Les mots de passe ne sont conservés nulle part : ils s'affichent une
+            seule fois, quand ils sont posés (création, réinitialisation, ou
+            « Nouveaux mots de passe pour tous les chefs »). Les noms ne sont pas
+            en ligne non plus (base hors services approuvés, phase de tests) :
+            choisissez votre fichier <b>numéro;nom</b> (par exemple
+            import_chefs_equipe.txt sur OneDrive) pour les afficher ici ; il est lu
+            par ce navigateur seulement.
+          </p>
+          <div id="teamsApercu" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="card">
+          <h3>Comptes existants</h3>
+          <div class="add-row">
+            <input type="text" id="comptesFiltre" autocomplete="off" placeholder="Filtrer par matricule ou nom…">
+            <button class="secondary" id="btnRafraichirComptes">Rafraîchir</button>
+          </div>
+          <p class="note" style="margin-top:0;margin-bottom:14px;">
+            Un mot de passe oublié ne se retrouve pas : il n'est pas conservé, seule
+            une empreinte irréversible l'est. « Réinitialiser » en pose un nouveau,
+            pour cette personne uniquement.
+          </p>
+          <div id="comptesListe"></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <p class="note" id="storageNote">Chargement du registre…</p>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modalMessage" aria-describedby="modalMessage">
+    <div class="modal-message" id="modalMessage"></div>
+    <div class="field" id="modalInputField" style="display:none;margin-bottom:14px;">
+      <input type="text" id="modalInput" autocomplete="off">
+    </div>
+    <div class="modal-actions">
+      <button class="secondary" id="modalCancelBtn">Annuler</button>
+      <button class="primary" id="modalOkBtn">OK</button>
+    </div>
+  </div>
+</div>
+<div class="toast-wrap" id="toastWrap" aria-live="polite" aria-atomic="false"></div>
+
+
+<script>window.__RV_LOGO__ = "data:image/png;base64,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YmUueG1wAAAAAAA8P3hwYWNrZXQgYmVnaW49Iu+7vyIgaWQ9Ilc1TTBNcENlaGlIenJlU3pOVGN6a2M5ZCI/Pgo8eDp4bXBtZXRhIHhtbG5zOng9ImFkb2JlOm5zOm1ldGEvIiB4OnhtcHRrPSJBZG9iZSBYTVAgQ29yZSA3LjAtYzAwMCAxLjAwMDAwMCwgMDAwMC8wMC8wMC0wMDowMDowMCAgICAgICAgIj4KIDxyZGY6UkRGIHhtbG5zOnJkZj0iaHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyI+CiAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIKICAgIHhtbG5zOmRjPSJodHRwOi8vcHVybC5vcmcvZGMvZWxlbWVudHMvMS4xLyIKICAgIHhtbG5zOnhtcD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wLyIKICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgeG1sbnM6c3RFdnQ9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZUV2ZW50IyIKICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIgogICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgIGRjOmZvcm1hdD0iaW1hZ2UvcG5nIgogICB4bXA6Q3JlYXRvclRvb2w9IkFkb2JlIEV4cHJlc3MgUGhvdG9zIChXaW5kb3dzKSIKICAgeG1wOk1ldGFkYXRhRGF0ZT0iMjAyNi0wNy0yMVQxNDoyOTo1MiswMjowMCIKICAgeG1wOk1vZGlmeURhdGU9IjIwMjYtMDctMjFUMTQ6Mjk6NTIrMDI6MDAiCiAgIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6ZmRmNTUzMDItNjhlMC1kZDRhLTg5ZDYtOTRlNDlmNTM1YzU3IgogICB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOmZkZjU1MzAyLTY4ZTAtZGQ0YS04OWQ2LTk0ZTQ5ZjUzNWM1NyIKICAgeG1wTU06T3JpZ2luYWxE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";</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.min.js"></script>
+<script>
+/* ================================================================
+   1) CONFIGURATION SUPABASE
+   Tableau de bord Supabase → Project Settings → API
+   - SUPABASE_URL      : URL du projet
+   - SUPABASE_ANON_KEY : clé "anon"/"publishable" (jamais la service_role !)
+   La sécurité réelle est assurée côté serveur par les politiques RLS
+   (voir le fichier schema.sql fourni). La clé anon est publique par nature.
+   ================================================================ */
+// DMS cars (08/10/2026) : projet Supabase DEDIE gfwfeoavfahjxygjvrkd, distinct
+// de celui de l Outil terrain (wsrkvmvxpylhaxwkkguo). Comptes, trajets et
+// referentiel sont propres a cette application ; rien n est partage.
+// RESERVATIONS — masquees le 02/10/2026, a la demande.
+//
+// Rien n est supprime : la table, le chargement, la creation et le depart
+// depuis une reservation restent en place et continuent de fonctionner. Seuls
+// l onglet et son ecran sont retires de la vue. Remettre cette valeur a true
+// les fait revenir tels quels.
+//
+// Masquer plutot que supprimer, parce que « pour le moment » n est pas
+// « definitivement », et qu une fonctionnalite arrachee se recolle mal.
+const RESERVATIONS_ACTIVES = false;
+
+const SUPABASE_URL = "https://gfwfeoavfahjxygjvrkd.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdmd2Zlb2F2ZmFoanh5Z2p2cmtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE0MzkzNzksImV4cCI6MjEwNzAxNTM3OX0.F7wGdlhhj-p7R49xZr3-eBsb-G8OPu8dSrIZnGbzAsc";
+
+const SUPABASE_READY = !!(SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes("VOTRE-PROJET"));
+// UN SEUL CLIENT PAR PAGE — 01/10/2026.
+//
+// Embarque dans l Outil terrain (iframe de meme origine), on reprend SON
+// client au lieu d en creer un second. Deux clients sur la meme cle de session
+// se disputent le meme verrou Web Locks : c est ce qui faisait redemander un
+// mot de passe a quelqu un de deja connecte. Un seul client, et la contention
+// ne peut plus exister — ce n est plus une correction, c est une impossibilite.
+//
+// Ouvert seul a son adresse, le client de l application n existe pas : on en
+// cree un, exactement comme avant. L autonomie est preservee sans effort.
+//
+// L acces a window.parent n est possible que parce que l iframe est de meme
+// origine. Il ne l etait PAS du temps du montage blob:, qui est l autre raison
+// pour laquelle celui-ci a ete abandonne le 09/09/2026.
+function clientSupabase() {
+  try {
+    if (window.self !== window.top && window.parent && window.parent.__SB_TERRAIN__) {
+      return window.parent.__SB_TERRAIN__;
+    }
+  } catch (e) {
+    // Origine differente, ou acces refuse : on retombe sur un client propre.
+  }
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true }
+  });
+}
+
+const sb = SUPABASE_READY ? clientSupabase() : null;
+// Vrai quand le client vient de l application : plusieurs conduites en
+// dependent, et il vaut mieux le dire une fois que le redemander partout.
+const SB_EMPRUNTE = !!(sb && window.parent !== window && window.parent.__SB_TERRAIN__ === sb);
+</script>
+<script>
+"use strict";
+
+/* ================================================================
+   2) UTILITAIRES — échappement anti-XSS, annonces, toasts
+   ================================================================ */
+// Échappe pour insertion en TEXTE et en valeur d'ATTRIBUT (guillemets inclus).
+function esc(s){
+  return (s == null ? "" : String(s)).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+const liveRegion = document.getElementById("liveCount"); // déjà aria-live
+function announce(){ /* placeholder si besoin d'annonces additionnelles */ }
+
+const toastWrap = document.getElementById("toastWrap");
+function toast(message, type){ // type: '', 'error', 'warn'
+  const t = document.createElement("div");
+  t.className = "toast" + (type ? " " + type : "");
+  t.setAttribute("role", type === "error" ? "alert" : "status");
+  t.textContent = message;                       // textContent → aucune injection possible
+  toastWrap.appendChild(t);
+  setTimeout(() => { t.style.opacity = "0"; setTimeout(() => t.remove(), 250); }, 4200);
+}
+
+/* ================================================================
+   3) FILE D'ATTENTE HORS-LIGNE + CACHE LECTURE
+   - Toute écriture passe par enqueue(). Si le réseau échoue ou que le
+     navigateur est hors-ligne, l'opération est persistée puis rejouée.
+   - Les lectures retombent sur un cache localStorage si Supabase est
+     injoignable, pour que l'appli reste consultable hors-ligne.
+   ================================================================ */
+const QUEUE_KEY = "rv_offline_queue_v1";
+const CACHE_PREFIX = "rv_cache_v1:";
+
+function loadQueue(){
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]"); }
+  catch { return []; }
+}
+function persistQueue(q){
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {}
+}
+let opQueue = loadQueue();
+
+function cacheGet(name){
+  try { return JSON.parse(localStorage.getItem(CACHE_PREFIX + name)); }
+  catch { return null; }
+}
+function cacheSet(name, data){
+  try { localStorage.setItem(CACHE_PREFIX + name, JSON.stringify(data)); } catch {}
+}
+
+let flushing = false;
+function pendingCount(){ return opQueue.length; }
+function isOffline(){ return !navigator.onLine; }
+
+/* Distingue erreur réseau (à réessayer) vs erreur serveur/RLS (à abandonner). */
+function isNetworkError(err){
+  if (isOffline()) return true;
+  if (err && (err.name === "TypeError" || err.message === "Failed to fetch")) return true;
+  // Les erreurs PostgREST/RLS ont un code/status → considérées "définitives".
+  if (err && (err.code || err.status)) return false;
+  return true;
+}
+
+/* Exécute une opération contre Supabase. Renvoie {error} le cas échéant. */
+async function runOp(op){
+  if (!sb) return { error: new Error("Supabase non configuré") };
+  if (op.kind === "insert")  return await sb.from(op.table).insert(op.row);
+  if (op.kind === "update")  return await sb.from(op.table).update(op.patch).eq("id", op.id);
+  if (op.kind === "delete")  return await sb.from(op.table).delete().eq("id", op.id);
+  if (op.kind === "upsert")  return await sb.from(op.table).upsert(op.row);
+  return { error: new Error("Opération inconnue") };
+}
+
+/* Met une opération en file, tente de la vider immédiatement. */
+async function enqueue(op){
+  op.opId = op.opId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
+  opQueue.push(op);
+  persistQueue(opQueue);
+  updateNetBar();
+  await flushQueue();
+}
+
+async function flushQueue(){
+  if (flushing || !sb) return;
+  if (opQueue.length === 0) { updateNetBar(); return; }
+  if (isOffline()) { updateNetBar(); return; }
+  flushing = true;
+  updateNetBar();
+  try {
+    while (opQueue.length > 0) {
+      const op = opQueue[0];
+      let res;
+      try {
+        res = await runOp(op);
+      } catch (err) {
+        if (isNetworkError(err)) { break; }        // réseau : on réessaiera
+        toast("Une modification n'a pas pu être synchronisée (droits ou données invalides) et a été abandonnée.", "error");
+        opQueue.shift(); persistQueue(opQueue); continue;
+      }
+      if (res && res.error) {
+        if (isNetworkError(res.error)) { break; }   // réseau : réessai plus tard
+        toast("Synchronisation refusée par le serveur : " + (res.error.message || "erreur inconnue"), "error");
+        opQueue.shift(); persistQueue(opQueue); continue;
+      }
+      opQueue.shift(); persistQueue(opQueue);         // succès
+    }
+  } finally {
+    flushing = false;
+    updateNetBar();
+    // Si tout est vidé, on resynchronise depuis le serveur.
+    if (opQueue.length === 0 && !isOffline()) { syncFromServer(); }
+  }
+}
+
+const netbar = document.getElementById("netbar");
+function updateNetBar(){
+  const q = pendingCount();
+  netbar.className = "netbar";
+  if (isOffline()) {
+    netbar.classList.add("show", "offline");
+    netbar.textContent = "";
+    const dot = document.createElement("span"); dot.textContent = "⚠ Hors-ligne — les modifications seront synchronisées au retour du réseau";
+    netbar.appendChild(dot);
+    if (q > 0) { const c = document.createElement("span"); c.className = "qcount"; c.textContent = q + " en attente"; netbar.appendChild(c); }
+  } else if (q > 0) {
+    netbar.classList.add("show", "syncing");
+    netbar.textContent = "Synchronisation en cours… ";
+    const c = document.createElement("span"); c.className = "qcount"; c.textContent = q + " opération(s)"; netbar.appendChild(c);
+  } else {
+    netbar.className = "netbar"; netbar.textContent = "";
+  }
+}
+
+window.addEventListener("online",  () => { updateNetBar(); flushQueue(); });
+window.addEventListener("offline", () => { updateNetBar(); });
+setInterval(() => { flushQueue(); }, 15000);
+
+/* ================================================================
+   4) COUCHE D'ACCÈS AUX DONNÉES (tables relationnelles)
+   Mapping snake_case (BDD) <-> camelCase (appli) pour ne pas
+   bouleverser la logique de rendu existante.
+   ================================================================ */
+function tripFromRow(r){
+  return {
+    id: r.id, plaque: r.plaque, chauffeur: r.chauffeur,
+    lieuDepart: r.lieu_depart, heureDepart: r.heure_depart, motif: r.motif || "",
+    lieuArrivee: r.lieu_arrivee, heureArrivee: r.heure_arrivee,
+    signalement: r.signalement || "", status: r.status,
+    etatExterieur: r.etat_exterieur || "", etatInterieur: r.etat_interieur || "",
+    createdBy: r.created_by || null
+  };
+}
+function tripToRow(t){
+  return {
+    id: t.id, plaque: t.plaque, chauffeur: t.chauffeur,
+    lieu_depart: t.lieuDepart, heure_depart: t.heureDepart, motif: t.motif || "",
+    lieu_arrivee: t.lieuArrivee, heure_arrivee: t.heureArrivee,
+    signalement: t.signalement || "", status: t.status,
+    etat_exterieur: t.etatExterieur || null, etat_interieur: t.etatInterieur || null
+  };
+}
+function resaFromRow(r){
+  return {
+    createdBy: r.created_by || null,
+    id: r.id, plaque: r.plaque, chauffeur: r.chauffeur, lieuDepart: r.lieu_depart,
+    dateDebut: r.date_debut, dateFin: r.date_fin, motif: r.motif || ""
+  };
+}
+function resaToRow(r){
+  return {
+    id: r.id, plaque: r.plaque, chauffeur: r.chauffeur, lieu_depart: r.lieuDepart,
+    date_debut: r.dateDebut, date_fin: r.dateFin, motif: r.motif || ""
+  };
+}
+function uuid(){
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random()*16|0, v = c === "x" ? r : (r&0x3|0x8); return v.toString(16);
+  });
+}
+
+/* Lecture générique avec repli sur le cache local. */
+async function fetchList(table, cacheName){
+  if (!sb) return cacheGet(cacheName) || [];
+  try {
+    const { data, error } = await sb.from(table).select("*");
+    if (error) throw error;
+    cacheSet(cacheName, data);
+    return data;
+  } catch (e) {
+    const cached = cacheGet(cacheName);
+    if (cached) return cached;
+    return [];
+  }
+}
+
+/* ================================================================
+   5) AUTHENTIFICATION RÉELLE (Supabase Auth)
+   Remplace le hash en dur côté client. Les droits gestionnaire sont
+   contrôlés côté serveur par RLS ; l'UI ne fait que refléter la session.
+   ================================================================ */
+let gestAuthenticated = false;   // true si le compte est manager ou admin
+let monProfil = null;            // profil complet lu dans `profils`
+let accesRefuse = false;         // connecté, mais sans droit sur le Registre
+let repriseEnCours = false;      // on ne sait pas ENCORE s'il y a une session
+
+/* Domaine des identifiants synthétiques. Les chefs d'équipe n'ont pas d'e-mail :
+   Supabase Auth en exige un, on le fabrique à partir du matricule. Aucun
+   courrier n'y est jamais envoyé. Doit correspondre à DOMAINE dans
+   l'Edge Function manage-chauffeurs. */
+// Meme domaine que l Outil terrain : c est desormais le meme compte.
+const DOMAINE_MATRICULE = "chauffeurs.sales-lentz.lu";
+
+/* Les gestionnaires, eux, ont une vraie adresse professionnelle et leur compte
+   Supabase est créé avec. Un identifiant contenant « @ » est donc pris tel
+   quel ; tout le reste est traité comme un matricule. Sans cela, un
+   gestionnaire ne pourrait pas se connecter du tout : son adresse serait
+   transformée en un matricule inexistant. */
+const emailDepuisMatricule = m => {
+  const v = String(m).trim().toLowerCase();
+  if (v.includes("@")) return v;
+  return v.replace(/[^a-z0-9._-]/g, "") + "@" + DOMAINE_MATRICULE;
+};
+
+/* Porte d'accès de l'application entière.
+   Avant le 31/08/2026, seul l'onglet Gestionnaire était protégé et tout le
+   reste — trajets, réservations, noms des chefs d'équipe — était lisible par
+   quiconque ouvrait la page. La lecture est désormais réservée aux connectés. */
+function refreshAppGate(){
+  const connecte = !!monProfil;
+
+  // Tant que la reprise est en cours, on n'affiche NI l'application NI le
+  // formulaire : on ne sait pas encore. Afficher le formulaire reviendrait à
+  // affirmer « vous n'êtes pas connecté », ce qui était faux une fois sur deux.
+  const reprise = document.getElementById("appReprise");
+  if (reprise) reprise.style.display = (!connecte && repriseEnCours) ? "block" : "none";
+
+  const gate = document.getElementById("appLoginGate");
+  if (gate) {
+    gate.style.display = (connecte || repriseEnCours) ? "none" : "block";
+    // Connecté à l'Outil terrain mais sans statut chef d'équipe : le dire, au
+    // lieu d'afficher un formulaire de connexion qui ne changerait rien.
+    const err = document.getElementById("appLoginError");
+    if (accesRefuse && err) {
+      err.textContent = "Le Registre est réservé aux chefs d'équipe et aux gestionnaires. "
+        + "Demandez l'accès à votre gestionnaire.";
+      err.style.display = "block";
+    }
+  }
+
+  const header = document.querySelector("header.top");
+  const nav = document.querySelector("nav.tabs");
+  if (header) header.style.display = connecte ? "" : "none";
+  if (nav) nav.style.display = connecte ? "" : "none";
+  /* Hors session, on masque tous les panneaux par un style en ligne. Une fois
+     connecté, on le retire et on rend la main à la feuille de style
+     (`section{display:none}` / `section.active{display:block}`).
+
+     Ne pas remettre ici un display:none sur les panneaux inactifs : switchTab
+     ne bascule que la classe `.active`, et une classe ne l'emporte jamais sur
+     un style en ligne. Le panneau devenait actif mais restait masqué — après
+     connexion, cliquer « En cours » ou « Réservations » n'affichait plus rien,
+     et la page paraissait vide alors que les données étaient bien là. */
+  document.querySelectorAll('section[role="tabpanel"]').forEach(sec => {
+    sec.style.display = connecte ? "" : "none";
+  });
+
+  const note = document.getElementById("storageNote");
+  if (note) note.style.visibility = connecte ? "" : "hidden";
+
+  const qui = document.getElementById("appWhoami");
+  const btnOut = document.getElementById("btnAppLogout");
+  if (qui) {
+    qui.style.display = connecte ? "" : "none";
+    qui.textContent = connecte
+      ? (monProfil.nom || monProfil.matricule) + (gestAuthenticated ? " — gestionnaire" : "")
+      : "";
+  }
+  if (btnOut) btnOut.style.display = connecte ? "" : "none";
+  const btnMdp = document.getElementById("btnMonMdp");
+  if (btnMdp) btnMdp.style.display = connecte ? "" : "none";
+
+  // L'onglet Gestionnaire n'apparaît que pour les gestionnaires.
+  const ongletGest = document.getElementById("tabbtn-gestionnaire");
+  if (ongletGest) ongletGest.style.display = gestAuthenticated ? "" : "none";
+  // L historique suit exactement la meme regle : il etait DANS le panneau
+  // gestionnaire, il en garde l audience. Les deux lignes se lisent ensemble,
+  // pour qu on ne puisse pas en changer une en oubliant l autre.
+  const ongletHist = document.getElementById("tabbtn-historique");
+  if (ongletHist) ongletHist.style.display = gestAuthenticated ? "" : "none";
+  // Un chauffeur qui se deconnecte alors qu il lisait l historique ne doit pas
+  // rester devant un onglet qui vient de disparaitre.
+  if (!gestAuthenticated) {
+    const ecranHist = document.getElementById("tab-historique");
+    if (ecranHist && ecranHist.classList.contains("active")) switchTab("nouveau");
+  }
+
+  refreshGestGate();
+}
+
+function refreshGestGate(){
+  const gate = document.getElementById("gestLoginGate");
+  const content = document.getElementById("gestContent");
+  if (gate) gate.style.display = "none";               // la connexion est globale désormais
+  if (content) content.style.display = gestAuthenticated ? "block" : "none";
+}
+
+/* Droit de modifier ou supprimer un enregistrement : son auteur, ou un
+   gestionnaire. Les anciens enregistrements sans auteur (créés avant cette
+   version) ne sont modifiables que par un gestionnaire. */
+function peutModifier(obj){
+  if (gestAuthenticated) return true;
+  if (!monProfil || !obj || !obj.createdBy) return false;
+  return obj.createdBy === monProfil.uid;
+}
+
+// Delai de garde : aucune promesse ne doit pouvoir laisser la porte fermee.
+// Jumeau d'avecDelai() dans app.js, ou il a ete pose le 01/09/2026 apres un
+// blocage en production. Il manquait ici, et c'est ce qui a permis au defaut du
+// 09/09/2026 : une seule requete qui traine, et chargerProfil() ne rendait
+// jamais la main — refreshAppGate() n'etait pas rappele, le formulaire de
+// connexion restait a l'ecran, et se reconnecter ne changeait rien.
+//
+// Au-dela du delai on rend `repli`, et l'appelant decide. Aucune de ces trois
+// requetes n'a le droit de decider d'un refus sur une absence de reponse : la
+// porte reelle est la RLS.
+function avecDelai(promesse, ms, repli){
+  return Promise.race([
+    Promise.resolve(promesse).catch(() => repli),
+    new Promise(ok => setTimeout(() => ok(repli), ms)),
+  ]);
+}
+
+// Témoin d'absence de réponse. `null` ne pouvait pas servir : il est aussi la
+// valeur légitime de « pas de session ». C'est le même SANS_REPONSE que dans
+// app.js, posé là le 11/09/2026 pour exactement la même raison.
+const SANS_REPONSE = { sansReponse: true };
+
+// Rend `true` si l'on a obtenu une réponse — quelle qu'elle soit — et `false`
+// si la question est restée sans réponse. L'appelant décide alors de réessayer
+// plutôt que de conclure.
+async function chargerProfil(){
+  if (!sb) { monProfil = null; gestAuthenticated = false; return true; }
+
+  // LE DÉFAUT CORRIGÉ LE 22/09/2026, ET POURQUOI IL AVAIT SURVÉCU.
+  //
+  // Cet appel-ci passait `null` en repli, et la ligne suivante concluait
+  // « pas de session » — donc affichait le formulaire de connexion. C'est
+  // exactement ce que les commentaires plus bas interdisent : ne refuser que
+  // sur une réponse REÇUE. La règle avait été appliquée aux deux appels
+  // suivants (le profil, puis mes_acces) et pas à celui-ci, le seul qui
+  // décide si l'on affiche le formulaire.
+  //
+  // Ce qui le déclenchait : supabase-js prend un verrou (Web Locks) nommé
+  // d'après la clé de stockage avant de lire la session. Cette page et l'Outil
+  // terrain qui l'affiche en iframe ont la même origine et le même projet,
+  // donc la même clé et LE MÊME VERROU. Au moment précis où l'iframe démarre,
+  // l'application est souvent en train de lire ou de rafraîchir le jeton :
+  // getSession() attend, le délai de garde rend la main, et la porte se
+  // fermait sur cette attente.
+  //
+  // Symptôme rapporté : il fallait ressaisir ses identifiants, ou attendre que
+  // la page se rafraîchisse d'elle-même — c'était onAuthStateChange qui
+  // repassait plus tard, verrou libre, et rouvrait la porte. La session avait
+  // toujours été valide.
+  const q = await avecDelai(sb.auth.getSession(), 8000, SANS_REPONSE);
+  if (q === SANS_REPONSE) return false;
+
+  const session = q && q.data && q.data.session;
+  if (!session) { monProfil = null; gestAuthenticated = false; return true; }
+  const rep = await avecDelai(
+    sb.from("profils")
+      .select("uid, matricule, nom, prenom, role, groupe, actif, team")
+      .eq("uid", session.user.id).maybeSingle(),
+    8000,
+    SANS_REPONSE,
+  );
+  // Même règle pour cette lecture-ci : une erreur ou un silence ne prouve pas
+  // que le compte n'a pas de profil. On rend « sans réponse » et l'appelant
+  // réessaie. `maybeSingle` permet justement de distinguer « aucune ligne »
+  // (data null, error null — une vraie réponse) d'une panne.
+  if (rep === SANS_REPONSE || (rep && rep.error)) return false;
+  const p = rep && rep.data;
+  if (!p || !p.actif) {
+    // Compte authentifié mais sans profil actif : on refuse plutôt que d'ouvrir
+    // à moitié. NB : on ne déconnecte PAS, la session est partagée avec
+    // l'Outil terrain — la fermer ici déconnecterait aussi l'application.
+    monProfil = null; gestAuthenticated = false;
+    return true;
+  }
+  const estGestionnaire = p.role === "manager" || p.role === "admin";
+  // Le Registre est réservé aux détenteurs de l'accès « registre » et aux
+  // gestionnaires. Un chauffeur ordinaire est authentifié mais n'a rien à y
+  // faire.
+  //
+  // L'accès est un code nommé depuis le 09/09/2026, calculé en base par
+  // mes_acces() : les accès de son groupe, plus les siens en propre. C'est
+  // exactement ce que teste acces_registre(), la fonction qu'appellent les sept
+  // politiques RLS du Registre.
+  //
+  // CE CONTRÔLE NE DOIT JAMAIS FERMER LA PORTE DE SON PROPRE CHEF.
+  // La porte réelle est la RLS : elle ne renvoie aucune ligne à un compte sans
+  // l'accès, quoi que la page décide. Ce test-ci ne sert qu'à afficher un
+  // message clair plutôt qu'un Registre vide.
+  //
+  // Première version, le 09/09/2026 : un appel sans délai de garde, et un refus
+  // dès que la réponse n'arrivait pas. Résultat, sur TOUS les appareils : un
+  // appel qui échoue ou traîne — jeton à rafraîchir sur un client qui démarre à
+  // froid, réseau lent — et tout chef d'équipe se voyait refuser l'entrée,
+  // c'est-à-dire renvoyer vers ce formulaire. Se reconnecter n'y changeait rien,
+  // puisque le même appel échouait de nouveau.
+  //
+  // L'Outil terrain, lui, entourait déjà le même appel d'un avecDelai() et
+  // retombait sur son cache : même RPC, deux robustesses différentes. D'où une
+  // application qui marchait et un Registre qui non.
+  //
+  // Donc : on ne refuse que sur une réponse REÇUE et négative. Sans réponse, on
+  // laisse entrer et la RLS tranche — c'est ce que le commentaire d'origine
+  // annonçait, et que le code ne faisait pas.
+  let refusConnu = false;
+  if (!estGestionnaire) {
+    const r = await avecDelai(sb.rpc("mes_acces"), 8000, null);
+    const acc = r && !r.error ? r.data : null;
+    if (Array.isArray(acc)) refusConnu = !acc.includes("registre");
+  }
+  if (refusConnu) {
+    monProfil = null; gestAuthenticated = false; accesRefuse = true;
+    return true;
+  }
+  accesRefuse = false;
+  monProfil = p;
+  choisirMaTeam();
+  gestAuthenticated = estGestionnaire;
+  return true;
+}
+
+async function attemptAppLogin(){
+  const matEl = document.getElementById("appLoginUser");
+  const passEl = document.getElementById("appLoginPass");
+  const errEl = document.getElementById("appLoginError");
+  const matricule = matEl.value.trim();
+  const password = passEl.value;
+  const echec = (msg) => { errEl.textContent = msg; errEl.style.display = "block"; };
+  if (!sb) return echec("Supabase n'est pas configuré.");
+  if (!matricule || !password) return echec("Merci de saisir votre identifiant et votre mot de passe.");
+  const { error } = await sb.auth.signInWithPassword({
+    email: emailDepuisMatricule(matricule), password
+  });
+  if (error) return echec("Identifiant ou mot de passe incorrect.");
+  errEl.style.display = "none";
+  matEl.value = ""; passEl.value = "";
+  // onAuthStateChange s'occupe du reste.
+}
+
+/* L'ancienne fonction attemptGestLogin (connexion par e-mail, réservée à
+   l'onglet Gestionnaire) est remplacée par attemptAppLogin, définie plus haut :
+   la connexion vaut désormais pour toute l'application, et se fait au matricule. */
+
+// Démarrage. Tant que la question reste sans réponse, on réessaie au lieu de
+// conclure : le verrou d'authentification est partagé avec l'Outil terrain
+// (même origine, même projet, donc même clé de stockage), et il se libère en
+// général en quelques centaines de millisecondes. Les quatre tentatives
+// couvrent largement ce délai sans jamais montrer le formulaire de connexion
+// à quelqu'un qui est déjà connecté.
+//
+// Il n'y a plus qu'UN SEUL getSession() au démarrage. Il y en avait deux : un
+// premier dont le résultat n'était même pas lu, puis celui de chargerProfil().
+// Deux prises du même verrou pour une seule information — de quoi doubler les
+// chances de tomber pendant que l'application le tenait.
+async function demarrerSession(){
+  repriseEnCours = true;
+  refreshAppGate();
+  try {
+    for (const attente of [0, 400, 1200, 3000]) {
+      if (attente) await new Promise(ok => setTimeout(ok, attente));
+      if (await chargerProfil()) return;
+    }
+    // Quatre fois sans réponse : on n'en sait pas plus qu'au début. On laisse
+    // alors le formulaire s'afficher — c'est le dernier recours, pas le
+    // premier réflexe.
+  } finally {
+    repriseEnCours = false;
+    refreshAppGate();
+    if (monProfil) { loadTrips(); syncFromServer(); }
+  }
+}
+
+if (sb) {
+  demarrerSession();
+  // DMS cars, 09/10/2026 — « Se déconnecter » ne déconnectait pas. supabase-js
+  // appelle ce rappel EN TENANT son verrou d'authentification, et attend qu'il
+  // finisse ; chargerProfil() redemande ce même verrou (getSession) : chacun
+  // attendait l'autre, signOut() ne rendait jamais la main et l'écran restait
+  // connecté (le serveur, lui, avait bien fermé la session : 204 dans les
+  // journaux). La documentation Supabase le dit : ne rien attendre de Supabase
+  // dans ce rappel. On rend la main tout de suite et on travaille juste après.
+  const abonnement = sb.auth.onAuthStateChange((_event, _session) => {
+    if (deconnexionEnCours) return;   // la page va repartir de zéro
+    setTimeout(async () => {
+      // Sans réponse, chargerProfil() ne touche à rien : l'écran garde ce qu'il
+      // affichait, ce qui est la bonne conduite sur un silence réseau.
+      const repondu = await chargerProfil();
+      if (!repondu) return;
+      repriseEnCours = false;
+      refreshAppGate();
+      if (monProfil) { flushQueue(); loadTrips(); syncFromServer(); }
+    }, 0);
+  });
+
+  // Un client EMPRUNTE survit a cette page : quand l utilisateur ferme le
+  // Registre, l iframe disparait mais l abonnement resterait inscrit chez
+  // l application, a rappeler du code d un document detruit. On se retire.
+  // Sur un client a nous, cela ne coute rien et evite d avoir deux conduites.
+  if (SB_EMPRUNTE) {
+    window.addEventListener("pagehide", () => {
+      try { abonnement.data.subscription.unsubscribe(); } catch (e) {}
+    });
+  }
+}
+
+document.getElementById("btnAppLogin").addEventListener("click", attemptAppLogin);
+document.getElementById("appLoginPass").addEventListener("keydown", e => { if (e.key === "Enter") attemptAppLogin(); });
+document.getElementById("appLoginUser").addEventListener("keydown", e => { if (e.key === "Enter") attemptAppLogin(); });
+// L'écran se ferme d'abord, sans attendre le serveur : un clic sur
+// « Se déconnecter » ne doit jamais laisser l'application ouverte, même si le
+// réseau ou le verrou d'authentification traîne.
+//
+// 15/10/2026 — « Se déconnecter » ne faisait toujours rien, avec une vraie
+// session. signOut() ne retire la session du navigateur que si l'appel au
+// serveur réussit : jeton expiré dont le rafraîchissement échoue, réseau faible,
+// verrou d'authentification occupé — et la session restait. Le rafraîchissement
+// automatique suivant la rechargeait, et l'application se rouvrait : l'écran
+// semblait n'avoir jamais réagi. Désormais : la session locale est effacée
+// quoi qu'il arrive, puis la page repart de zéro.
+let deconnexionEnCours = false;
+async function seDeconnecter(){
+  if (pendingCount() > 0 && !(await showConfirm(
+      pendingCount() + " modification(s) ne sont pas encore synchronisées et seront perdues. "
+      + "Se déconnecter quand même ?"))) return;
+  deconnexionEnCours = true;
+  monProfil = null; gestAuthenticated = false; accesRefuse = false;
+  refreshAppGate();
+  if (sb) { try { await avecDelai(sb.auth.signOut(), 5000, null); } catch (e) {} }
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith("sb-") && k.includes("-auth-token"))
+      .forEach(k => localStorage.removeItem(k));
+    opQueue = []; persistQueue(opQueue);   // rien ne doit partir sous le compte suivant
+  } catch (e) {}
+  location.replace(location.pathname);
+}
+document.getElementById("btnAppLogout").addEventListener("click", seDeconnecter);
+/* Changement de son propre mot de passe — DMS cars, 08/10/2026. Ouvert à tout
+   compte connecté (chef d'équipe compris). Passe par manage-chauffeurs, qui
+   vérifie le mot de passe actuel et applique les mêmes contrôles qu'à la
+   création (longueur, fuites connues). */
+document.getElementById("btnMonMdp").addEventListener("click", async () => {
+  try {
+    const ancien = await showPrompt("Votre mot de passe actuel :", "mot de passe actuel");
+    if (ancien === null) return;
+    const nouveau = await showPrompt("Nouveau mot de passe (" + MDP_MIN + " caractères minimum) :", "nouveau mot de passe");
+    if (nouveau === null) return;
+    if (nouveau.trim().length < MDP_MIN) { toast("Mot de passe trop court : " + MDP_MIN + " caractères minimum.", "error"); return; }
+    const confirme = await showPrompt("Retapez le nouveau mot de passe :", "nouveau mot de passe");
+    if (confirme === null) return;
+    if (confirme.trim() !== nouveau.trim()) { toast("Les deux saisies ne correspondent pas : rien n'a été changé.", "error"); return; }
+    await appelerManageChefs({ action: "changer_mon_mdp", ancien, nouveau: nouveau.trim() });
+    toast("Mot de passe changé.");
+  } catch (e) { toast(String(e.message || e), "error"); }
+});
+
+const btnGestOut = document.getElementById("btnGestLogout");
+if (btnGestOut) btnGestOut.addEventListener("click", seDeconnecter);
+refreshAppGate();
+
+/* ================================================================
+   6) ÉTAT APPLICATIF
+   ================================================================ */
+let LIEUX = ["Strassen","Bertrange","Findel","Bascharage","Huberty","Hosingen","Allerborn","Mersch","Esch","Sandweiler","Merl","Munsbach","Frisch","Hobscheid","Septfontaines","Wiltz"];
+let lieuxRows = [];      // [{id,nom}]
+let vehiculesRows = [];  // [{id,plaque}]
+let vehicules = [];      // [plaque]
+let TEAM_MIN = 1, TEAM_MAX = 60;
+let trips = [];
+let reservations = [];
+let loaded = false;
+// Durée de conservation (27/10/2026) : réglage `settings.retention`, 3 mois par
+// défaut. La base efface chaque nuit ce qui la dépasse (registre_purge) ; la
+// page n'affiche pas davantage, pour montrer la même chose que la base.
+let RETENTION_MOIS = 3;
+function retentionMs(){ return RETENTION_MOIS * 30.44 * 24 * 60 * 60 * 1000; }
+
+function teamList(){
+  const list = [];
+  for (let i = TEAM_MIN; i <= TEAM_MAX; i++) list.push("Team " + i);
+  return list;
+}
+function plaqueId(plaque){ const r = vehiculesRows.find(v => v.plaque === plaque); return r ? r.id : null; }
+function lieuId(nom){ const r = lieuxRows.find(l => l.nom === nom); return r ? r.id : null; }
+
+/* ================================================================
+   7) LOGO
+   ================================================================ */
+const COMPANY_LOGO_URL = window.__RV_LOGO__ || "";
+(function applyLogo(){
+  const url = (COMPANY_LOGO_URL || "").trim();
+  if (url) {
+    const img = document.getElementById("company-logo");
+    const fb = document.getElementById("brand-fallback");
+    if (img) {
+      img.onload = () => { img.style.display = "block"; if (fb) fb.style.display = "none"; };
+      img.onerror = () => { img.style.display = "none"; if (fb) fb.style.display = "flex"; };
+      img.src = url;
+    }
+  }
+})();
+
+/* ================================================================
+   8) SÉLECTEURS (lieux / plaques / teams)
+   ================================================================ */
+function fillSelect(sel){
+  sel.innerHTML = "";
+  LIEUX.forEach(l => { const o = document.createElement("option"); o.value = l; o.textContent = l; sel.appendChild(o); });
+}
+function addManualOption(sel){
+  const o = document.createElement("option"); o.value = "__manual__"; o.textContent = "Autre (saisie manuelle)"; sel.appendChild(o);
+}
+function renderPlaqueSelectInto(id, manuelId){
+  const sel = document.getElementById(id); const previous = sel.value; sel.innerHTML = "";
+  vehicules.forEach(v => { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); });
+  addManualOption(sel);
+  if (vehicules.includes(previous)) sel.value = previous;
+  else if (vehicules.length === 0) sel.value = "__manual__";
+  const manuel = document.getElementById(manuelId);
+  manuel.style.display = (sel.value === "__manual__" || vehicules.length === 0) ? "block" : "none";
+}
+function renderTeamSelectInto(id, manuelId){
+  const sel = document.getElementById(id); const previous = sel.value; sel.innerHTML = "";
+  teamList().forEach(v => { const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o); });
+  addManualOption(sel);
+  if (teamList().includes(previous) && previous !== "Team " + TEAM_MIN) sel.value = previous;
+  else if (teamList().includes(maTeam())) sel.value = maTeam();
+  else if (teamList().includes(previous)) sel.value = previous;
+  else if (teamList().length === 0) sel.value = "__manual__";
+  const manuel = document.getElementById(manuelId);
+  manuel.style.display = (sel.value === "__manual__" || teamList().length === 0) ? "block" : "none";
+}
+function renderPlaqueSelect(){ renderPlaqueSelectInto("plaqueSelect", "plaqueManuel"); }
+function renderResaPlaqueSelect(){ renderPlaqueSelectInto("resaPlaqueSelect", "resaPlaqueManuel"); }
+// Team du compte connecté (DMS cars, 08/10/2026) : chaque chef d'équipe a la
+// sienne dans profils.team. Elle est présélectionnée dans « Nouveau trajet » et
+// « Réservation » ; le chef peut toujours en choisir une autre.
+function maTeam(){
+  return monProfil && monProfil.team != null ? "Team " + monProfil.team : "";
+}
+function choisirMaTeam(){
+  const mienne = maTeam();
+  if (!mienne || !teamList().includes(mienne)) return;
+  [["chauffeurSelect", "chauffeurManuel"], ["resaChauffeurSelect", "resaChauffeurManuel"]].forEach(([id, manuelId]) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.value = mienne;
+    document.getElementById(manuelId).style.display = "none";
+  });
+}
+function renderChauffeurSelect(){ renderTeamSelectInto("chauffeurSelect", "chauffeurManuel"); }
+function renderResaChauffeurSelect(){ renderTeamSelectInto("resaChauffeurSelect", "resaChauffeurManuel"); }
+
+document.getElementById("plaqueSelect").addEventListener("change", () => {
+  const sel = document.getElementById("plaqueSelect");
+  document.getElementById("plaqueManuel").style.display = (sel.value === "__manual__" || vehicules.length === 0) ? "block" : "none";
+});
+document.getElementById("resaPlaqueSelect").addEventListener("change", () => {
+  const sel = document.getElementById("resaPlaqueSelect");
+  document.getElementById("resaPlaqueManuel").style.display = (sel.value === "__manual__" || vehicules.length === 0) ? "block" : "none";
+});
+document.getElementById("chauffeurSelect").addEventListener("change", () => {
+  const sel = document.getElementById("chauffeurSelect");
+  document.getElementById("chauffeurManuel").style.display = (sel.value === "__manual__" || teamList().length === 0) ? "block" : "none";
+});
+document.getElementById("resaChauffeurSelect").addEventListener("change", () => {
+  const sel = document.getElementById("resaChauffeurSelect");
+  document.getElementById("resaChauffeurManuel").style.display = (sel.value === "__manual__" || teamList().length === 0) ? "block" : "none";
+});
+
+function refreshAllLieuxSelects(){
+  fillSelect(document.getElementById("lieuDepart"));
+  fillSelect(document.getElementById("resaLieuDepart"));
+  const filterLieuSel = document.getElementById("filterLieu");
+  const prevVal = filterLieuSel.value;
+  filterLieuSel.innerHTML = '<option value="">Tous les lieux</option>';
+  LIEUX.forEach(l => { const o = document.createElement("option"); o.value = l; o.textContent = l; filterLieuSel.appendChild(o); });
+  if (LIEUX.includes(prevVal)) filterLieuSel.value = prevVal;
+  if (loaded) renderAll();
+}
+
+/* ================================================================
+   9) BADGES (échappés)
+   ================================================================ */
+function plateBadge(plaque){
+  return `<span class="plate"><span class="band"><span class="stars">★★★</span>L</span><span class="num">${esc(plaque || "—")}</span></span>`;
+}
+function chipBadge(initiales){
+  return `<span class="chip">${esc(initiales || "—")}</span>`;
+}
+
+/* ================================================================
+   10) MODALE (focus trap + Échap) — alertes / confirmations maison
+   ================================================================ */
+let lastFocused = null;
+function openModal(){
+  const overlay = document.getElementById("modalOverlay");
+  lastFocused = document.activeElement;
+  overlay.style.display = "flex";
+}
+function closeModal(){
+  const overlay = document.getElementById("modalOverlay");
+  overlay.style.display = "none";
+  if (lastFocused && lastFocused.focus) lastFocused.focus();
+}
+function trapFocus(e){
+  const overlay = document.getElementById("modalOverlay");
+  if (overlay.style.display !== "flex") return;
+  if (e.key === "Escape") {
+    const cancel = document.getElementById("modalCancelBtn");
+    (cancel.style.display === "none" ? document.getElementById("modalOkBtn") : cancel).click();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  const focusables = overlay.querySelectorAll("input, button:not([style*='display: none']):not([style*='display:none'])");
+  const list = Array.from(focusables).filter(b => b.offsetParent !== null);
+  if (list.length === 0) return;
+  const first = list[0], last = list[list.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+document.addEventListener("keydown", trapFocus);
+
+function showAlert(message){
+  return new Promise(resolve => {
+    const okBtn = document.getElementById("modalOkBtn");
+    const cancelBtn = document.getElementById("modalCancelBtn");
+    document.getElementById("modalMessage").textContent = message;
+    document.getElementById("modalInputField").style.display = "none";
+    cancelBtn.style.display = "none";
+    okBtn.textContent = "OK";
+    openModal();
+    okBtn.focus();
+    const cleanup = () => { closeModal(); cancelBtn.style.display = ""; okBtn.removeEventListener("click", onOk); };
+    const onOk = () => { cleanup(); resolve(); };
+    okBtn.addEventListener("click", onOk);
+  });
+}
+function showConfirm(message){
+  return new Promise(resolve => {
+    const okBtn = document.getElementById("modalOkBtn");
+    const cancelBtn = document.getElementById("modalCancelBtn");
+    document.getElementById("modalMessage").textContent = message;
+    document.getElementById("modalInputField").style.display = "none";
+    cancelBtn.style.display = "";
+    okBtn.textContent = "Confirmer";
+    openModal();
+    okBtn.focus();
+    const cleanup = () => { closeModal(); okBtn.removeEventListener("click", onOk); cancelBtn.removeEventListener("click", onCancel); };
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+  });
+}
+
+/* Saisie modale. Renvoie la chaine saisie, ou null si l on annule — une
+   chaine vide reste une reponse valable : c est ainsi qu on demande un mot
+   de passe genere. */
+function showPrompt(message, placeholder){
+  return new Promise(resolve => {
+    const okBtn = document.getElementById("modalOkBtn");
+    const cancelBtn = document.getElementById("modalCancelBtn");
+    const champ = document.getElementById("modalInputField");
+    const input = document.getElementById("modalInput");
+    document.getElementById("modalMessage").textContent = message;
+    input.value = "";
+    input.placeholder = placeholder || "";
+    champ.style.display = "";
+    cancelBtn.style.display = "";
+    okBtn.textContent = "Confirmer";
+    openModal();
+    input.focus();
+    const cleanup = () => {
+      closeModal();
+      champ.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      input.removeEventListener("keydown", onKey);
+    };
+    const onOk = () => { const v = input.value; cleanup(); resolve(v); };
+    const onCancel = () => { cleanup(); resolve(null); };
+    const onKey = (e) => { if (e.key === "Enter") { e.preventDefault(); onOk(); } };
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    input.addEventListener("keydown", onKey);
+  });
+}
+
+/* ================================================================
+   11) DATES
+   ================================================================ */
+function nowLocalDatetime(){
+  const d = new Date(); d.setSeconds(0,0);
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,16);
+}
+function plusOneHour(localDt){
+  const d = new Date(localDt); d.setHours(d.getHours()+1);
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,16);
+}
+function fmt(dtStr){
+  if (!dtStr) return "—";
+  return new Date(dtStr).toLocaleString('fr-LU', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function durationSince(dtStr){
+  const diff = Date.now() - new Date(dtStr).getTime();
+  const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000);
+  return (h>0 ? h+"h " : "") + m + "min";
+}
+function toLocalInput(iso){
+  if (!iso) return "";
+  const d = new Date(iso); const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,16);
+}
+document.getElementById("heureDepart").value = nowLocalDatetime();
+document.getElementById("resaDebut").value = nowLocalDatetime();
+document.getElementById("resaFin").value = plusOneHour(document.getElementById("resaDebut").value);
+
+/* HEURE EN DIRECT — DMS cars, 09/10/2026. L'heure de départ (« Nouveau trajet »)
+   et l'heure d'arrivée (retour, onglet « En cours ») étaient posées une fois,
+   à l'ouverture de la page ou à l'affichage de la carte : un formulaire resté
+   ouvert vingt minutes déclarait l'heure d'il y a vingt minutes. Elles suivent
+   maintenant l'horloge, tant que personne ne les a modifiées à la main ; dès
+   qu'on y touche, la valeur choisie est respectée. */
+const SEL_HEURES_LIVE = '#heureDepart, input[id^="heureArrivee-"]';
+function heureSaisieALaMain(el){ return !!(el && el.dataset.manuel === "1"); }
+function rafraichirHeuresLive(){
+  const maintenant = nowLocalDatetime();
+  document.querySelectorAll(SEL_HEURES_LIVE).forEach(el => {
+    if (!heureSaisieALaMain(el) && document.activeElement !== el) el.value = maintenant;
+  });
+}
+document.addEventListener("input", e => {
+  if (e.target && e.target.matches && e.target.matches(SEL_HEURES_LIVE)) e.target.dataset.manuel = "1";
+});
+setInterval(rafraichirHeuresLive, 15000);
+// Un téléphone en veille suspend les minuteurs : on remet à l'heure au retour.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) rafraichirHeuresLive(); });
+// Heure à enregistrer : l'instant présent, sauf saisie à la main.
+function heureDeclaree(el){
+  return heureSaisieALaMain(el) ? new Date(el.value).toISOString() : new Date().toISOString();
+}
+
+/* ================================================================
+   12) VÉHICULES (table public.vehicules)
+   ================================================================ */
+async function loadVehicules(){
+  const rows = await fetchList("vehicules", "vehicules");
+  vehiculesRows = rows.map(r => ({ id: r.id, plaque: r.plaque }));
+  vehicules = vehiculesRows.map(r => r.plaque).sort((a,b)=>a.localeCompare(b));
+  renderPlaqueSelect(); renderResaPlaqueSelect(); renderGestionVehicules();
+}
+async function addVehicule(){
+  const input = document.getElementById("newVehiculePlaque");
+  const val = input.value.trim().toUpperCase();
+  if (!val) return;
+  if (vehicules.includes(val)) { await showAlert("Ce véhicule est déjà enregistré dans le système."); return; }
+  const row = { id: uuid(), plaque: val };
+  vehiculesRows.push(row); vehicules.push(val); vehicules.sort((a,b)=>a.localeCompare(b));
+  renderPlaqueSelect(); renderResaPlaqueSelect(); renderGestionVehicules();
+  input.value = "";
+  await enqueue({ kind:"insert", table:"vehicules", row });
+}
+async function removeVehicule(plaque){
+  if (!(await showConfirm(`Retirer ${plaque} de la liste des véhicules enregistrés ?\n(Les trajets déjà enregistrés avec cette plaque restent inchangés.)`))) return;
+  const id = plaqueId(plaque);
+  vehiculesRows = vehiculesRows.filter(v => v.plaque !== plaque);
+  vehicules = vehicules.filter(v => v !== plaque);
+  renderPlaqueSelect(); renderResaPlaqueSelect(); renderGestionVehicules();
+  if (id) await enqueue({ kind:"delete", table:"vehicules", id });
+}
+function renderGestionVehicules(){
+  const container = document.getElementById("vehiculeList");
+  if (vehicules.length === 0) {
+    container.innerHTML = `<div class="empty">Aucun véhicule enregistré. Ajoutez-en un ci-dessus, ou laissez la saisie manuelle active dans « Nouveau trajet ».</div>`;
+    return;
+  }
+  container.innerHTML = vehicules.map(v => `
+    <div class="row-item">
+      <div class="left">${plateBadge(v)}</div>
+      <button class="link" style="color:var(--accent-alert);" data-action="removeVehicule" data-plaque="${esc(v)}" aria-label="Retirer le véhicule ${esc(v)}">Retirer</button>
+    </div>`).join("");
+}
+document.getElementById("btnAddVehicule").addEventListener("click", addVehicule);
+
+/* ================================================================
+   13) PLAGE TEAM (table public.settings, clé team_range)
+   ================================================================ */
+async function loadChauffeurs(){
+  let stored = null;
+  if (sb) {
+    try {
+      const { data, error } = await sb.from("settings").select("value").eq("key","team_range").maybeSingle();
+      if (!error && data) { stored = data.value; cacheSet("team_range", stored); }
+    } catch { stored = cacheGet("team_range"); }
+  }
+  if (!stored) stored = cacheGet("team_range");
+  if (stored && Number.isFinite(stored.min) && Number.isFinite(stored.max)) { TEAM_MIN = stored.min; TEAM_MAX = stored.max; }
+  renderChauffeurSelect(); renderResaChauffeurSelect(); renderGestionChauffeurs();
+}
+async function updateTeamRange(){
+  const min = parseInt(document.getElementById("teamMinInput").value, 10);
+  const max = parseInt(document.getElementById("teamMaxInput").value, 10);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 1 || max < min) {
+    await showAlert("Merci d'indiquer une plage valide (ex : Team de 1 à 60)."); return;
+  }
+  TEAM_MIN = min; TEAM_MAX = max;
+  cacheSet("team_range", { min, max });
+  renderChauffeurSelect(); renderResaChauffeurSelect(); renderGestionChauffeurs();
+  if (loaded) renderAll();
+  await enqueue({ kind:"upsert", table:"settings", row:{ key:"team_range", value:{ min, max }, updated_at:new Date().toISOString() } });
+}
+function renderGestionChauffeurs(){
+  document.getElementById("teamMinInput").value = TEAM_MIN;
+  document.getElementById("teamMaxInput").value = TEAM_MAX;
+  document.getElementById("teamRangeCurrent").textContent = `Plage actuelle : Team ${TEAM_MIN} à Team ${TEAM_MAX} (${TEAM_MAX-TEAM_MIN+1} équipes).`;
+}
+document.getElementById("btnUpdateTeamRange").addEventListener("click", updateTeamRange);
+
+// Durée de conservation (27/10/2026). La base applique la valeur chaque nuit
+// et la borne elle-même entre 1 et 60 mois ; on refuse ici la même plage.
+function afficherRetention(){
+  const champ = document.getElementById("retentionInput");
+  if (champ && document.activeElement !== champ) champ.value = RETENTION_MOIS;
+  const note = document.getElementById("retentionCurrent");
+  if (note) note.textContent = `Durée actuelle : ${RETENTION_MOIS} mois.`;
+}
+async function updateRetention(){
+  const mois = parseInt(document.getElementById("retentionInput").value, 10);
+  if (!Number.isFinite(mois) || mois < 1 || mois > 60) {
+    await showAlert("Merci d'indiquer une durée entre 1 et 60 mois."); return;
+  }
+  if (mois < RETENTION_MOIS && !(await showConfirm(
+      `Réduire la durée à ${mois} mois ? Les trajets et réservations plus anciens seront effacés `
+      + "définitivement la nuit prochaine. Exportez l'historique avant si besoin."))) return;
+  RETENTION_MOIS = mois;
+  afficherRetention();
+  if (loaded) { pruneOld(); renderAll(); }
+  await enqueue({ kind:"upsert", table:"settings", row:{ key:"retention", value:{ mois }, updated_at:new Date().toISOString() } });
+  toast("Durée de conservation : " + mois + " mois.");
+}
+document.getElementById("btnUpdateRetention").addEventListener("click", updateRetention);
+afficherRetention();
+
+/* ================================================================
+   14) LIEUX (table public.lieux)
+   ================================================================ */
+async function loadLieux(){
+  const rows = await fetchList("lieux", "lieux");
+  if (rows.length) {
+    lieuxRows = rows.map(r => ({ id: r.id, nom: r.nom }));
+    LIEUX = lieuxRows.map(r => r.nom);
+  } // sinon on garde la liste par défaut
+  refreshAllLieuxSelects(); renderGestionLieux();
+}
+async function addLieu(){
+  const input = document.getElementById("newLieuNom");
+  const val = input.value.trim();
+  if (!val) return;
+  if (LIEUX.includes(val)) { await showAlert("Ce lieu est déjà enregistré dans le système."); return; }
+  const row = { id: uuid(), nom: val };
+  lieuxRows.push(row); LIEUX.push(val);
+  refreshAllLieuxSelects(); renderGestionLieux();
+  input.value = "";
+  await enqueue({ kind:"insert", table:"lieux", row });
+}
+async function removeLieu(nom){
+  if (!(await showConfirm(`Retirer "${nom}" de la liste des lieux ?\n(Les trajets déjà enregistrés avec ce lieu restent inchangés.)`))) return;
+  const id = lieuId(nom);
+  lieuxRows = lieuxRows.filter(l => l.nom !== nom);
+  LIEUX = LIEUX.filter(l => l !== nom);
+  refreshAllLieuxSelects(); renderGestionLieux();
+  if (id) await enqueue({ kind:"delete", table:"lieux", id });
+}
+function renderGestionLieux(){
+  const container = document.getElementById("lieuxList");
+  if (LIEUX.length === 0) { container.innerHTML = `<div class="empty">Aucun lieu enregistré.</div>`; return; }
+  container.innerHTML = LIEUX.map(l => `
+    <div class="row-item">
+      <div class="left">${esc(l)}</div>
+      <button class="link" style="color:var(--accent-alert);" data-action="removeLieu" data-nom="${esc(l)}" aria-label="Retirer le lieu ${esc(l)}">Retirer</button>
+    </div>`).join("");
+}
+document.getElementById("btnAddLieu").addEventListener("click", addLieu);
+
+/* ================================================================
+   14 bis) ÉTAT DU VÉHICULE ET PHOTOS — 23/09/2026
+   ================================================================
+   Un trajet portait un seul champ `signalement`, texte libre. Il en porte
+   trois : l'état EXTÉRIEUR, l'état INTÉRIEUR, et le signalement d'incident.
+
+   Pourquoi deux champs d'état et pas un : ce sont deux regards, faits à deux
+   moments et parfois par deux personnes — on fait le tour de la carrosserie
+   avant de monter, on voit l'intérieur en s'asseyant. Un seul champ produit
+   « RAS » ; deux champs produisent deux « RAS », ou un « RAS » et une
+   observation, ce qui est précisément l'information utile.
+
+   Rien n'est obligatoire. Un formulaire imposé à chaque prise de véhicule
+   produit des « RAS » automatiques au bout d'une semaine, et plus aucune
+   information. Les champs se remplissent quand on observe quelque chose.
+
+   LES PHOTOS EXIGENT UNE CONNEXION, ET C'EST DIT
+   Le texte part dans la file hors-ligne comme le reste. Les photos, non :
+   mettre des images en file d'attente demanderait IndexedDB et un
+   réenvoi différé, pour un cas — constater un dommage dans un sous-sol sans
+   réseau — qui se règle en ressortant. Le bouton l'annonce au lieu d'échouer
+   en silence. */
+
+// Réduction avant envoi. Une photo de téléphone fait 3 à 8 Mo ; à 1600 px et
+// en qualité 0,8 elle en fait environ 300 Ko, ce qui reste largement lisible
+// pour constater une rayure. Sans cette étape, un constat de dix photos
+// coûterait 60 Mo de stockage et autant de données mobiles au chauffeur.
+function photoReduire(fichier, maxPx = 1600, qualite = 0.8){
+  return new Promise((ok, non) => {
+    const lecteur = new FileReader();
+    lecteur.onerror = () => non(new Error("Lecture du fichier impossible."));
+    lecteur.onload = () => {
+      const img = new Image();
+      img.onerror = () => non(new Error("Image illisible."));
+      img.onload = () => {
+        try {
+          let { width: l, height: h } = img;
+          const f = Math.min(1, maxPx / Math.max(l, h));
+          l = Math.round(l * f); h = Math.round(h * f);
+          const cv = document.createElement("canvas");
+          cv.width = l; cv.height = h;
+          cv.getContext("2d").drawImage(img, 0, 0, l, h);
+          cv.toBlob(b => b ? ok(b) : non(new Error("Conversion impossible.")), "image/jpeg", qualite);
+        } catch (e) { non(e); }
+      };
+      img.src = lecteur.result;
+    };
+    lecteur.readAsDataURL(fichier);
+  });
+}
+
+// Photos connues, par trajet. Rechargées à la demande : l'historique peut
+// compter des centaines de trajets, on ne va pas tirer leurs images.
+const photosParTrajet = new Map();
+
+async function photosCharger(tripId){
+  if (!sb) return [];
+  try {
+    const { data, error } = await sb.from("trip_photos")
+      .select("id, chemin, zone, legende, prise_le")
+      .eq("trip_id", tripId).order("prise_le");
+    if (error) throw error;
+    photosParTrajet.set(tripId, data || []);
+    return data || [];
+  } catch { return photosParTrajet.get(tripId) || []; }
+}
+
+// Le seau est privé : chaque affichage demande une URL signée d'une heure.
+async function photoUrl(chemin){
+  try {
+    const { data, error } = await sb.storage.from("registre_etat").createSignedUrl(chemin, 3600);
+    if (error) throw error;
+    return data.signedUrl;
+  } catch { return null; }
+}
+
+async function photoEnvoyer(tripId, fichier, zone){
+  if (!sb) throw new Error("Supabase n'est pas configuré.");
+  if (isOffline()) throw new Error("hors-ligne");
+  const blob = await photoReduire(fichier);
+  const id = uuid();
+  const chemin = tripId + "/" + id + ".jpg";
+
+  const up = await sb.storage.from("registre_etat")
+    .upload(chemin, blob, { contentType: "image/jpeg", upsert: false });
+  if (up.error) throw up.error;
+
+  const ins = await sb.from("trip_photos").insert({ id, trip_id: tripId, chemin, zone });
+  if (ins.error) {
+    // Le fichier est déjà déposé : sans ce retrait il resterait dans le seau
+    // sans qu'aucune ligne ne le nomme — invisible, jamais purgé, et payé.
+    try { await sb.storage.from("registre_etat").remove([chemin]); } catch {}
+    throw ins.error;
+  }
+  await photosCharger(tripId);
+}
+
+async function ajouterPhoto(tripId, input){
+  const t = trips.find(x => x.id === tripId);
+  if (refusSiPasMonTrajet(t)) { input.value = ""; return; }
+  const fichier = input.files && input.files[0];
+  input.value = "";
+  if (!fichier) return;
+  const zoneSel = document.getElementById("photoZone-" + tripId);
+  const zone = zoneSel ? zoneSel.value : "exterieur";
+  toast("Envoi de la photo…");
+  try {
+    await photoEnvoyer(tripId, fichier, zone);
+    toast("Photo ajoutée.");
+    await dessinerPhotos(tripId);
+  } catch (e) {
+    if (String(e && e.message) === "hors-ligne")
+      showAlert("Pas de connexion.\n\nLe texte de l'état est enregistré hors-ligne, mais une photo demande une connexion. Réessayez une fois le réseau revenu.");
+    else showAlert("Envoi impossible : " + ((e && e.message) || e));
+  }
+}
+
+async function retirerPhoto(photoId, tripId){
+  if (!(await showConfirm("Retirer cette photo ?"))) return;
+  try {
+    const { error } = await sb.rpc("trip_photo_supprimer", { p_photo: photoId });
+    if (error) throw error;
+    await photosCharger(tripId);
+    await dessinerPhotos(tripId);
+    toast("Photo retirée.");
+  } catch (e) { showAlert("Retrait impossible : " + ((e && e.message) || e)); }
+}
+
+const ZONES_PHOTO = { exterieur: "Extérieur", interieur: "Intérieur", autre: "Autre" };
+
+// Dessine la bande de vignettes d'un trajet. Les URL signées expirent : on les
+// redemande à chaque dessin plutôt que de les garder, ce qui évite une image
+// cassée sur un onglet resté ouvert une matinée.
+async function dessinerPhotos(tripId){
+  const zone = document.getElementById("photos-" + tripId);
+  if (!zone) return;
+  const liste = photosParTrajet.get(tripId) || await photosCharger(tripId);
+  if (!liste.length) { zone.innerHTML = ""; return; }
+  const t = trips.find(x => x.id === tripId);
+  const modifiable = peutModifier(t);
+  const urls = await Promise.all(liste.map(p => photoUrl(p.chemin)));
+  zone.innerHTML = liste.map((p, k) => `
+    <figure class="photo-vignette">
+      ${urls[k]
+        ? `<a href="${esc(urls[k])}" target="_blank" rel="noopener"><img src="${esc(urls[k])}" alt="${esc(ZONES_PHOTO[p.zone] || p.zone)}" loading="lazy"></a>`
+        : `<div class="photo-absente">image indisponible</div>`}
+      <figcaption>${esc(ZONES_PHOTO[p.zone] || p.zone)}${modifiable
+        ? ` · <button class="link" data-action="retirerPhoto" data-id="${esc(p.id)}" data-trip="${esc(tripId)}">retirer</button>` : ""}</figcaption>
+    </figure>`).join("");
+}
+
+// Le panneau d'état, replié par défaut : il ne doit pas alourdir la carte d'un
+// trajet ordinaire, seulement s'ouvrir quand on a quelque chose à noter.
+function panneauEtat(t){
+  const id = esc(t.id);
+  return `
+      <div class="signal-toggle" id="signal-${id}" style="display:none;">
+        <div class="field">
+          <label for="etatExt-${id}">État extérieur</label>
+          <textarea id="etatExt-${id}" placeholder="Carrosserie, vitres, feux, propreté…">${esc(t.etatExterieur || "")}</textarea>
+        </div>
+        <div class="field">
+          <label for="etatInt-${id}">État intérieur</label>
+          <textarea id="etatInt-${id}" placeholder="Sièges, tableau de bord, propreté, objets oubliés…">${esc(t.etatInterieur || "")}</textarea>
+        </div>
+        <div class="field">
+          <label for="signalInput-${id}">Signalement (incident ou dommage)</label>
+          <textarea id="signalInput-${id}" placeholder="Décrire un incident, un dommage…">${esc(t.signalement || "")}</textarea>
+        </div>
+        <div class="actions-row" style="flex-wrap:wrap;gap:8px;align-items:center;">
+          <button class="secondary" data-action="saveEtat" data-id="${id}">Enregistrer</button>
+          <select id="photoZone-${id}" aria-label="Zone de la photo" style="max-width:150px;">
+            <option value="exterieur">Extérieur</option>
+            <option value="interieur">Intérieur</option>
+            <option value="autre">Autre</option>
+          </select>
+          <label class="secondary" style="cursor:pointer;display:inline-flex;align-items:center;padding:8px 12px;border-radius:8px;">
+            Ajouter une photo
+            <input type="file" accept="image/*" capture="environment" data-photo="${id}" style="display:none;">
+          </label>
+        </div>
+        <div class="photos-bande" id="photos-${id}"></div>
+      </div>`;
+}
+
+// Résumé affiché sur la carte, sans ouvrir le panneau.
+function resumeEtat(t){
+  const bouts = [];
+  if (t.etatExterieur) bouts.push(`<b>Ext. :</b> ${esc(t.etatExterieur)}`);
+  if (t.etatInterieur) bouts.push(`<b>Int. :</b> ${esc(t.etatInterieur)}`);
+  const n = (photosParTrajet.get(t.id) || []).length;
+  if (n) bouts.push(`${n} photo${n > 1 ? "s" : ""}`);
+  return bouts.length ? `<div class="etat-resume">${bouts.join(" · ")}</div>` : "";
+}
+
+async function saveEtat(id){
+  const t = trips.find(t => t.id === id);
+  if (refusSiPasMonTrajet(t)) return;
+  const lire = (p) => { const el = document.getElementById(p + "-" + id); return el ? el.value.trim() : ""; };
+  const patch = {
+    etat_exterieur: lire("etatExt") || null,
+    etat_interieur: lire("etatInt") || null,
+    signalement: lire("signalInput"),
+  };
+  t.etatExterieur = patch.etat_exterieur || "";
+  t.etatInterieur = patch.etat_interieur || "";
+  t.signalement = patch.signalement;
+  renderAll();
+  await enqueue({ kind: "update", table: "trips", id, patch });
+  toast("État enregistré.");
+}
+
+/* ================================================================
+   15) TRAJETS (table public.trips)
+   ================================================================ */
+async function loadTrips(){
+  const rows = await fetchList("trips", "trips");
+  trips = rows.map(tripFromRow);
+  pruneOld();
+  loaded = true;
+  document.getElementById("storageNote").textContent =
+    "Registre partagé (Supabase) — sécurisé par RLS, disponible hors-ligne avec synchronisation automatique.";
+  renderAll();
+}
+function pruneOld(){
+  const cutoff = Date.now() - retentionMs();
+  trips = trips.filter(t => {
+    if (t.status !== "termine") return true;
+    const refTime = new Date(t.heureArrivee || t.heureDepart).getTime();
+    return refTime >= cutoff;
+  });
+}
+function renderAll(){
+  const live = trips.filter(t => t.status === "en_cours").sort((a,b) => new Date(b.heureDepart) - new Date(a.heureDepart));
+  const done = trips.filter(t => t.status === "termine").sort((a,b) => new Date(b.heureDepart) - new Date(a.heureDepart));
+  document.getElementById("liveCount").textContent = live.length + " véhicule(s) en circulation";
+  document.getElementById("tabLiveCount").textContent = live.length;
+  document.getElementById("tabHistCount").textContent = done.length;
+  renderLive(live); renderHistory(done);
+}
+
+function renderLive(live){
+  const container = document.getElementById("liveList");
+  if (live.length === 0) { container.innerHTML = `<div class="empty">Aucun véhicule en circulation actuellement.</div>`; return; }
+  container.innerHTML = live.map(t => `
+    <div class="trip-card live" data-id="${esc(t.id)}">
+      <div class="trip-top">
+        ${plateBadge(t.plaque)}
+        <span class="duree" data-duree="${esc(t.id)}">${esc(durationSince(t.heureDepart))}</span>
+      </div>
+      <div class="trip-meta">
+        <span>${chipBadge(t.chauffeur)}</span>
+        <span><b>Départ :</b> ${esc(t.lieuDepart)} — ${esc(fmt(t.heureDepart))}</span>
+      </div>
+      ${t.motif ? `<div class="motif">${esc(t.motif)}</div>` : ""}
+      ${t.signalement ? `<div class="signal-badge">⚠ ${esc(t.signalement)}</div>` : ""}
+      ${resumeEtat(t)}
+      ${peutModifier(t) ? `
+      <div class="actions-row">
+        <button class="secondary" data-action="toggleSignal" data-id="${esc(t.id)}">État / signalement</button>
+        <button class="primary" data-action="toggleReturn" data-id="${esc(t.id)}">Enregistrer le retour</button>
+      </div>
+${panneauEtat(t)}
+      <div class="return-form" id="return-${esc(t.id)}" style="display:none;">
+        <div class="field-row">
+          <div class="field">
+            <label for="lieuArrivee-${esc(t.id)}">Lieu d'arrivée</label>
+            <select id="lieuArrivee-${esc(t.id)}"></select>
+          </div>
+          <div class="field">
+            <label for="heureArrivee-${esc(t.id)}">Heure d'arrivée</label>
+            <input type="datetime-local" id="heureArrivee-${esc(t.id)}" value="${esc(nowLocalDatetime())}">
+          </div>
+        </div>
+        <button class="primary" data-action="completeReturn" data-id="${esc(t.id)}">Terminer le trajet</button>
+      </div>` : `
+      <p class="note" style="margin-bottom:0;">${t.createdBy
+        ? "Trajet démarré par un autre chef d'équipe. Seul son auteur, ou un gestionnaire, peut ajouter un signalement ou enregistrer le retour."
+        : "Trajet antérieur aux comptes nominatifs : il n'a pas d'auteur connu, seul un gestionnaire peut le clôturer."}</p>`}
+    </div>`).join("");
+  live.forEach(t => { const sel = document.getElementById(`lieuArrivee-${t.id}`); if (sel) fillSelect(sel); });
+}
+function toggleReturn(id){ const el = document.getElementById(`return-${id}`); el.style.display = el.style.display === "none" ? "block" : "none"; }
+async function toggleSignal(id){
+  const el = document.getElementById(`signal-${id}`);
+  const ouvre = el.style.display === "none";
+  el.style.display = ouvre ? "block" : "none";
+  if (ouvre) await dessinerPhotos(id);
+}
+// Sur un trajet terminé, l'état et les photos se consultent sans rien modifier :
+// c'est là qu'on vérifie un dommage contesté des semaines plus tard.
+async function voirPhotos(id){
+  const t = trips.find(x => x.id === id);
+  const zone = document.getElementById("photos-" + id);
+  if (!zone) return;
+  if (zone.dataset.ouvert === "1") { zone.innerHTML = ""; zone.dataset.ouvert = "0"; return; }
+  zone.dataset.ouvert = "1";
+  zone.innerHTML = '<div class="note">Lecture…</div>';
+  await photosCharger(id);
+  await dessinerPhotos(id);
+  if (!(photosParTrajet.get(id) || []).length) {
+    const dit = [t && t.etatExterieur ? "Extérieur : " + t.etatExterieur : null,
+                 t && t.etatInterieur ? "Intérieur : " + t.etatInterieur : null].filter(Boolean);
+    zone.innerHTML = '<div class="note">' + (dit.length ? esc(dit.join(" — ")) : "Aucun état ni photo pour ce trajet.") + '</div>';
+  }
+}
+/* Un trajet en cours se voit de tous — savoir quel véhicule est sorti et depuis
+   quand est justement l'objet du registre. Mais seul celui qui l'a démarré, ou
+   un gestionnaire, le clôture ou le complète.
+
+   Vérifié ici, au clic, et pas seulement au dessin des boutons. La base applique
+   la même règle (politique `trips_modifier`), mais un UPDATE refusé par RLS ne
+   lève pas d'erreur : il touche zéro ligne. L'écran affichait donc le trajet
+   comme terminé — il disparaissait de « En cours » — avant de le voir revenir à
+   la synchronisation suivante, le retour n'ayant jamais été enregistré. */
+function refusSiPasMonTrajet(t){
+  if (!t) return true;
+  if (peutModifier(t)) return false;
+  showAlert(t.createdBy
+    ? "Ce trajet a été démarré par un autre chef d'équipe.\n\nSeul son auteur, ou un gestionnaire, peut enregistrer le retour ou ajouter un signalement."
+    : "Ce trajet n'a pas d'auteur connu : il est antérieur aux comptes nominatifs.\n\nSeul un gestionnaire peut le clôturer.");
+  renderAll();
+  return true;
+}
+
+async function completeReturn(id){
+  const t = trips.find(t => t.id === id);
+  if (refusSiPasMonTrajet(t)) return;
+  // L ARRET DU PARTAGE PRECEDE LA FIN DE LA COURSE, ET IL EST FAIT PAR LE
+  // CHAUFFEUR. Ce code arretait d abord le partage tout seul en enregistrant
+  // le retour. Cela marchait, et c etait le probleme : le chauffeur voyait sa
+  // course se terminer sans jamais poser le geste d arreter d emettre, et ne
+  // pouvait donc pas en etre sur. Couper sa position est une chose qu on fait,
+  // pas une chose qui arrive.
+  //
+  // On refuse donc, au lieu de corriger a sa place. Un refus coute une
+  // manipulation ; il rend l arret visible et verifiable.
+  const lieuArrivee = document.getElementById(`lieuArrivee-${id}`).value;
+  const heureArrivee = document.getElementById(`heureArrivee-${id}`).value;
+  if (!heureArrivee) { await showAlert("Merci d'indiquer l'heure d'arrivée."); return; }
+  t.lieuArrivee = lieuArrivee;
+  t.heureArrivee = heureDeclaree(document.getElementById(`heureArrivee-${id}`));
+  t.status = "termine";
+  renderAll();
+  await enqueue({ kind:"update", table:"trips", id, patch:{ lieu_arrivee: t.lieuArrivee, heure_arrivee: t.heureArrivee, status: "termine" } });
+  toast("Trajet terminé.");
+}
+
+/* ---------- Historique (dans Gestionnaire) ---------- */
+function renderHistory(doneParam){
+  const done = doneParam || trips.filter(t => t.status === "termine").sort((a,b) => new Date(b.heureDepart) - new Date(a.heureDepart));
+  const textFilter = document.getElementById("filterText").value.trim().toLowerCase();
+  const lieuFilter = document.getElementById("filterLieu").value;
+  const filtered = done.filter(t => {
+    const matchText = !textFilter || [t.plaque,t.chauffeur,t.motif].join(" ").toLowerCase().includes(textFilter);
+    const matchLieu = !lieuFilter || t.lieuDepart === lieuFilter || t.lieuArrivee === lieuFilter;
+    return matchText && matchLieu;
+  });
+  const container = document.getElementById("historyList");
+  if (filtered.length === 0) { container.innerHTML = `<div class="empty">Aucun trajet trouvé pour ces critères.</div>`; return; }
+  container.innerHTML = filtered.map(t => `
+    <div class="trip-card">
+      <div class="trip-top">
+        ${plateBadge(t.plaque)}
+        <span class="status-done">Terminé</span>
+      </div>
+      <div class="trip-meta">
+        ${chipBadge(t.chauffeur)}
+        <span>${esc(t.lieuDepart)} → ${esc(t.lieuArrivee || "?")}</span>
+        <span>${esc(fmt(t.heureDepart))} → ${esc(fmt(t.heureArrivee))}</span>
+      </div>
+      ${t.motif ? `<div class="motif">${esc(t.motif)}</div>` : ""}
+      ${t.signalement ? `<div class="signal-badge">⚠ ${esc(t.signalement)}</div>` : ""}
+      ${resumeEtat(t)}
+      <div class="photos-bande" id="photos-${esc(t.id)}"></div>
+      <div class="actions-row">
+        <button class="secondary" data-action="voirPhotos" data-id="${esc(t.id)}">État et photos</button>
+        ${peutModifier(t) ? `<button class="secondary" data-action="toggleEditTrip" data-id="${esc(t.id)}">Modifier</button>` : ""}
+        ${gestAuthenticated ? `<button class="link" style="color:var(--accent-alert);" data-action="deleteTrip" data-id="${esc(t.id)}">Supprimer</button>` : ""}
+      </div>
+      <div class="return-form" id="edit-${esc(t.id)}" style="display:none;">
+        <div class="field-row">
+          <div class="field"><label for="editChauffeur-${esc(t.id)}">Numéro Team</label><input type="text" id="editChauffeur-${esc(t.id)}" class="init-input" value="${esc(t.chauffeur)}"></div>
+          <div class="field"><label for="editPlaque-${esc(t.id)}">Plaque</label><input type="text" id="editPlaque-${esc(t.id)}" class="plaque-input" value="${esc(t.plaque)}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="editLieuDepart-${esc(t.id)}">Lieu départ</label><select id="editLieuDepart-${esc(t.id)}"></select></div>
+          <div class="field"><label for="editHeureDepart-${esc(t.id)}">Heure départ</label><input type="datetime-local" id="editHeureDepart-${esc(t.id)}" value="${esc(toLocalInput(t.heureDepart))}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="editLieuArrivee-${esc(t.id)}">Lieu arrivée</label><select id="editLieuArrivee-${esc(t.id)}"><option value="">—</option></select></div>
+          <div class="field"><label for="editHeureArrivee-${esc(t.id)}">Heure arrivée</label><input type="datetime-local" id="editHeureArrivee-${esc(t.id)}" value="${esc(toLocalInput(t.heureArrivee))}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field full"><label for="editMotif-${esc(t.id)}">Motif</label><input type="text" id="editMotif-${esc(t.id)}" value="${esc(t.motif)}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field full"><label for="editSignalement-${esc(t.id)}">Signalement</label><textarea id="editSignalement-${esc(t.id)}">${esc(t.signalement || "")}</textarea></div>
+          <div class="field full"><label for="editEtatExt-${esc(t.id)}">État extérieur</label><textarea id="editEtatExt-${esc(t.id)}">${esc(t.etatExterieur || "")}</textarea></div>
+          <div class="field full"><label for="editEtatInt-${esc(t.id)}">État intérieur</label><textarea id="editEtatInt-${esc(t.id)}">${esc(t.etatInterieur || "")}</textarea></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="editStatus-${esc(t.id)}">Statut</label>
+            <select id="editStatus-${esc(t.id)}">
+              <option value="en_cours" ${t.status === 'en_cours' ? 'selected' : ''}>En cours</option>
+              <option value="termine" ${t.status === 'termine' ? 'selected' : ''}>Terminé</option>
+            </select>
+          </div>
+        </div>
+        <button class="primary" data-action="saveTripEdit" data-id="${esc(t.id)}">Enregistrer les modifications</button>
+      </div>
+    </div>`).join("");
+  filtered.forEach(t => {
+    const selD = document.getElementById(`editLieuDepart-${t.id}`);
+    const selA = document.getElementById(`editLieuArrivee-${t.id}`);
+    if (selD) { fillSelect(selD); selD.value = t.lieuDepart; }
+    if (selA) { LIEUX.forEach(l => { const o = document.createElement("option"); o.value = l; o.textContent = l; selA.appendChild(o); }); selA.value = t.lieuArrivee || ""; }
+  });
+}
+function toggleEditTrip(id){ const el = document.getElementById(`edit-${id}`); el.style.display = el.style.display === "none" ? "block" : "none"; }
+async function saveTripEdit(id){
+  const t = trips.find(t => t.id === id);
+  if (!t) return;
+  t.chauffeur = document.getElementById(`editChauffeur-${id}`).value.trim().toUpperCase();
+  t.plaque = document.getElementById(`editPlaque-${id}`).value.trim().toUpperCase();
+  t.lieuDepart = document.getElementById(`editLieuDepart-${id}`).value;
+  const hd = document.getElementById(`editHeureDepart-${id}`).value; if (hd) t.heureDepart = new Date(hd).toISOString();
+  const lieuArr = document.getElementById(`editLieuArrivee-${id}`).value; t.lieuArrivee = lieuArr || null;
+  const ha = document.getElementById(`editHeureArrivee-${id}`).value; t.heureArrivee = ha ? new Date(ha).toISOString() : null;
+  t.motif = document.getElementById(`editMotif-${id}`).value.trim();
+  t.signalement = document.getElementById(`editSignalement-${id}`).value.trim();
+  t.etatExterieur = document.getElementById(`editEtatExt-${id}`).value.trim();
+  t.etatInterieur = document.getElementById(`editEtatInt-${id}`).value.trim();
+  t.status = document.getElementById(`editStatus-${id}`).value;
+  renderAll();
+  await enqueue({ kind:"update", table:"trips", id, patch: tripToRow(t) });
+  toast("Modifications enregistrées.");
+}
+async function deleteTrip(id){
+  if (!(await showConfirm("Supprimer définitivement ce trajet ? Cette action est irréversible."))) return;
+  trips = trips.filter(t => t.id !== id);
+  renderAll();
+  await enqueue({ kind:"delete", table:"trips", id });
+}
+document.getElementById("filterText").addEventListener("input", () => renderHistory());
+document.getElementById("filterLieu").addEventListener("change", () => renderHistory());
+
+/* ---------- Export CSV (protégé contre l'injection de formules) ---------- */
+function csvCell(v){
+  let s = (v == null ? "" : String(v));
+  if (/^[=+\-@]/.test(s)) s = "'" + s;         // neutralise l'injection CSV
+  return `"${s.replace(/"/g, '""')}"`;
+}
+document.getElementById("btnExport").addEventListener("click", () => {
+  const done = trips.filter(t => t.status === "termine");
+  const header = ["Plaque","Team","Lieu depart","Heure depart","Lieu arrivee","Heure arrivee","Motif","Signalement","Etat exterieur","Etat interieur"];
+  const rows = done.map(t => [t.plaque, t.chauffeur, t.lieuDepart, fmt(t.heureDepart), t.lieuArrivee, fmt(t.heureArrivee), t.motif, t.signalement, t.etatExterieur, t.etatInterieur].map(csvCell).join(","));
+  const csv = [header.map(csvCell).join(","), ...rows].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type:"text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "historique-vehicules.csv"; a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* ================================================================
+   16) RÉSERVATIONS (table public.reservations)
+   ================================================================ */
+async function loadReservations(){
+  const rows = await fetchList("reservations", "reservations");
+  reservations = rows.map(resaFromRow);
+  pruneExpiredReservations();
+  renderReservations();
+}
+function pruneExpiredReservations(){
+  const now = Date.now();
+  reservations = reservations.filter(r => new Date(r.dateFin).getTime() >= now - 3600000);
+}
+function overlaps(aStart,aEnd,bStart,bEnd){ return new Date(aStart) < new Date(bEnd) && new Date(bStart) < new Date(aEnd); }
+function activeTripFor(plaque){ return trips.find(t => t.status === "en_cours" && t.plaque === plaque) || null; }
+function findConflicts(plaque, dateDebut, dateFin, excludeId){
+  return reservations.filter(r => r.id !== excludeId && r.plaque === plaque && overlaps(dateDebut, dateFin, r.dateDebut, r.dateFin));
+}
+function renderReservations(){
+  const list = reservations.slice().sort((a,b) => new Date(a.dateDebut) - new Date(b.dateDebut));
+  document.getElementById("tabResaCount").textContent = list.length;
+  const container = document.getElementById("reservationList");
+  if (list.length === 0) { container.innerHTML = `<div class="empty">Aucune réservation à venir.</div>`; return; }
+  container.innerHTML = list.map(r => `
+    <div class="trip-card">
+      <div class="trip-top">
+        ${plateBadge(r.plaque)}
+        <span class="status-done" style="background:var(--accent-live-bg);color:var(--accent-live);">Réservé</span>
+      </div>
+      <div class="trip-meta">
+        ${chipBadge(r.chauffeur)}
+        <span><b>Du</b> ${esc(fmt(r.dateDebut))} <b>au</b> ${esc(fmt(r.dateFin))}</span>
+        ${r.lieuDepart ? `<span>${esc(r.lieuDepart)}</span>` : ""}
+      </div>
+      ${r.motif ? `<div class="motif">${esc(r.motif)}</div>` : ""}
+      <div class="actions-row">
+        ${peutModifier(r) ? `<button class="primary" data-action="startFromReservation" data-id="${esc(r.id)}">Démarrer le trajet</button>` : ""}
+        ${peutModifier(r) ? `<button class="link" style="color:var(--accent-alert);" data-action="cancelReservation" data-id="${esc(r.id)}">Annuler</button>` : ""}
+      </div>
+    </div>`).join("");
+}
+async function addReservation(){
+  const plaqueSelVal = document.getElementById("resaPlaqueSelect").value;
+  const plaque = (plaqueSelVal === "__manual__" || !plaqueSelVal) ? document.getElementById("resaPlaqueManuel").value.trim().toUpperCase() : plaqueSelVal;
+  const chauffeurSelVal = document.getElementById("resaChauffeurSelect").value;
+  const chauffeur = (chauffeurSelVal === "__manual__" || !chauffeurSelVal) ? document.getElementById("resaChauffeurManuel").value.trim().toUpperCase() : chauffeurSelVal;
+  const lieuDepart = document.getElementById("resaLieuDepart").value;
+  const dateDebut = document.getElementById("resaDebut").value;
+  const dateFin = document.getElementById("resaFin").value;
+  const motif = document.getElementById("resaMotif").value.trim();
+  if (!plaque || !chauffeur || !dateDebut || !dateFin) { await showAlert("Merci de renseigner au minimum la plaque, le numéro Team, ainsi que le début et la fin de la réservation."); return; }
+  if (new Date(dateFin) <= new Date(dateDebut)) { await showAlert("La fin prévue doit être postérieure au début de la réservation."); return; }
+  const dDebut = new Date(dateDebut).toISOString();
+  const dFin = new Date(dateFin).toISOString();
+  const conflicts = findConflicts(plaque, dDebut, dFin, null);
+  const active = activeTripFor(plaque);
+  if (conflicts.length > 0 || active) {
+    let detail = "";
+    if (active) detail += `– Véhicule actuellement en circulation, sorti par ${active.chauffeur} depuis ${fmt(active.heureDepart)} (retour non encore enregistré).\n`;
+    if (conflicts.length > 0) detail += conflicts.map(c => `– Réservé par ${c.chauffeur} du ${fmt(c.dateDebut)} au ${fmt(c.dateFin)}`).join("\n");
+    if (!(await showConfirm(`Attention : ${plaque} présente un conflit potentiel :\n${detail}\n\nCréer quand même cette réservation ?`))) return;
+  }
+  /* createdBy posé dès ici, alors que le serveur le remplira de toute façon
+     (colonne `created_by` avec défaut auth.uid()). Sans cela, entre la création
+     et la synchronisation suivante, l'objet local n'a pas d'auteur : peutModifier
+     renvoie false et l'auteur ne voit ni « Démarrer » ni « Annuler » sur sa
+     propre réservation, jusqu'à ce qu'il recharge la page. */
+  /* Ordre des clés aligné sur resaFromRow : syncFromServer compare les deux
+     listes par JSON.stringify, qui est sensible à l'ordre d'insertion. */
+  const resa = { createdBy: monProfil ? monProfil.uid : null,
+                 id: uuid(), plaque, chauffeur, lieuDepart, dateDebut: dDebut, dateFin: dFin, motif };
+  reservations.push(resa);
+  renderReservations();
+  document.getElementById("resaPlaqueManuel").value = "";
+  document.getElementById("resaChauffeurManuel").value = "";
+  document.getElementById("resaMotif").value = "";
+  document.getElementById("resaDebut").value = "";
+  document.getElementById("resaFin").value = "";
+  await enqueue({ kind:"insert", table:"reservations", row: resaToRow(resa) });
+  toast("Réservation créée.");
+}
+/* Une réservation se voit de tous, mais ne s'annule et ne se démarre que par son
+   auteur ou un gestionnaire. Le droit est vérifié ici, à l'instant du clic, et
+   pas seulement au moment où les boutons sont dessinés : un onglet resté ouvert,
+   une seconde fenêtre ou un rendu antérieur à la connexion peuvent présenter un
+   bouton périmé. La base applique la même règle (politique `resa_supprimer`),
+   mais un DELETE refusé par RLS n'est pas une erreur — il touche zéro ligne en
+   silence. Sans ce garde-fou, « Démarrer » créerait le trajet (autorisé à tous)
+   sans jamais retirer la réservation, qui réapparaîtrait à la synchronisation
+   suivante en laissant un trajet fantôme derrière elle. */
+function refusSiPasAMoi(r){
+  if (!r) return true;
+  if (peutModifier(r)) return false;
+  showAlert("Cette réservation a été faite par " + (r.chauffeur || "un autre chef d'équipe") +
+            ".\n\nSeul son auteur, ou un gestionnaire, peut la démarrer ou l'annuler.");
+  renderReservations();
+  return true;
+}
+
+async function cancelReservation(id){
+  const r = reservations.find(x => x.id === id);
+  if (refusSiPasAMoi(r)) return;
+  if (!(await showConfirm("Annuler cette réservation ?"))) return;
+  reservations = reservations.filter(r => r.id !== id);
+  renderReservations();
+  await enqueue({ kind:"delete", table:"reservations", id });
+}
+async function startFromReservation(id){
+  const r = reservations.find(r => r.id === id);
+  if (refusSiPasAMoi(r)) return;
+  const active = activeTripFor(r.plaque);
+  if (active) { await showAlert(`Impossible de démarrer ce trajet : ${r.plaque} est déjà en circulation, sorti par ${active.chauffeur} depuis ${fmt(active.heureDepart)}.\n\nEnregistrez d'abord son retour dans l'onglet « En cours » avant de démarrer cette réservation.`); return; }
+  const trip = {
+    id: uuid(), plaque: r.plaque, chauffeur: r.chauffeur,
+    lieuDepart: r.lieuDepart || LIEUX[0], heureDepart: new Date().toISOString(),
+    motif: r.motif, lieuArrivee: null, heureArrivee: null, signalement: "", status: "en_cours",
+    createdBy: monProfil ? monProfil.uid : null
+  };
+  trips.push(trip);
+  reservations = reservations.filter(x => x.id !== id);
+  renderAll(); renderReservations();
+  await enqueue({ kind:"insert", table:"trips", row: tripToRow(trip) });
+  await enqueue({ kind:"delete", table:"reservations", id });
+  switchTab("live");
+}
+document.getElementById("btnReserve").addEventListener("click", addReservation);
+
+// Les reservations sortent de la vue. On masque l onglet ET son ecran : laisser
+// l ecran accessible par une autre voie laisserait un bouton « Reserver » dans
+// une application qui n a plus de reservations.
+if (!RESERVATIONS_ACTIVES) {
+  const ongletResa = document.getElementById("tabbtn-reservations");
+  const ecranResa = document.getElementById("tab-reservations");
+  if (ongletResa) ongletResa.style.display = "none";
+  if (ecranResa) ecranResa.style.display = "none";
+}
+
+/* ================================================================
+   17) NOUVEAU TRAJET
+   ================================================================ */
+document.getElementById("btnStart").addEventListener("click", async () => {
+  const plaqueSelVal = document.getElementById("plaqueSelect").value;
+  const plaque = (plaqueSelVal === "__manual__" || !plaqueSelVal) ? document.getElementById("plaqueManuel").value.trim() : plaqueSelVal;
+  const chauffeurSelVal = document.getElementById("chauffeurSelect").value;
+  const chauffeur = (chauffeurSelVal === "__manual__" || !chauffeurSelVal) ? document.getElementById("chauffeurManuel").value.trim() : chauffeurSelVal;
+  const lieuDepart = document.getElementById("lieuDepart").value;
+  const heureDepart = document.getElementById("heureDepart").value;
+  const motif = document.getElementById("motif").value.trim();
+  if (!plaque || !chauffeur || !heureDepart) { await showAlert("Merci de renseigner au minimum la plaque, le numéro Team et l'heure de départ."); return; }
+  const plaqueUp = plaque.toUpperCase();
+  const chauffeurUp = chauffeur.toUpperCase();
+
+  const active = activeTripFor(plaqueUp);
+  if (active) { await showAlert(`Impossible de démarrer ce trajet : ${plaqueUp} est déjà en circulation, sorti par ${active.chauffeur} depuis ${fmt(active.heureDepart)}.\n\nEnregistrez d'abord son retour dans l'onglet « En cours » avant de démarrer un nouveau trajet avec ce véhicule.`); return; }
+
+  const nowIso = new Date().toISOString();
+  const activeReservationElsewhere = reservations.find(r => r.plaque === plaqueUp && r.chauffeur !== chauffeurUp && overlaps(nowIso, nowIso, r.dateDebut, r.dateFin));
+  if (activeReservationElsewhere) {
+    if (!(await showConfirm(`Attention : ${plaqueUp} est réservé par ${activeReservationElsewhere.chauffeur} de ${fmt(activeReservationElsewhere.dateDebut)} à ${fmt(activeReservationElsewhere.dateFin)}.\n\nDémarrer quand même ce trajet ?`))) return;
+  }
+  const trip = {
+    id: uuid(), plaque: plaqueUp, chauffeur: chauffeurUp,
+    lieuDepart, heureDepart: heureDeclaree(document.getElementById("heureDepart")), motif,
+    lieuArrivee: null, heureArrivee: null, signalement: "", status: "en_cours",
+    createdBy: monProfil ? monProfil.uid : null
+  };
+  trips.push(trip);
+  renderAll();
+  document.getElementById("plaqueManuel").value = "";
+  document.getElementById("chauffeurManuel").value = "";
+  document.getElementById("motif").value = "";
+  document.getElementById("heureDepart").value = nowLocalDatetime();
+  delete document.getElementById("heureDepart").dataset.manuel;   // repart en direct
+  await enqueue({ kind:"insert", table:"trips", row: tripToRow(trip) });
+  toast("Trajet démarré.");
+  switchTab("live");
+});
+
+/* ================================================================
+   18) DÉLÉGATION D'ÉVÉNEMENTS (remplace les onclick en ligne → anti-XSS)
+   ================================================================ */
+const actionHandlers = {
+  removeVehicule: el => removeVehicule(el.dataset.plaque),
+  removeLieu: el => removeLieu(el.dataset.nom),
+  toggleSignal: el => toggleSignal(el.dataset.id),
+  voirPhotos: el => voirPhotos(el.dataset.id),
+  saveEtat: el => saveEtat(el.dataset.id),
+  retirerPhoto: el => retirerPhoto(el.dataset.id, el.dataset.trip),
+  toggleReturn: el => toggleReturn(el.dataset.id),
+  completeReturn: el => completeReturn(el.dataset.id),
+  toggleEditTrip: el => toggleEditTrip(el.dataset.id),
+  saveTripEdit: el => saveTripEdit(el.dataset.id),
+  deleteTrip: el => deleteTrip(el.dataset.id),
+  startFromReservation: el => startFromReservation(el.dataset.id),
+  cancelReservation: el => cancelReservation(el.dataset.id),
+};
+// LE BRANCHEMENT MANQUAIT — DMS cars, 13/10/2026. La table ci-dessus existait,
+// mais aucun écouteur ne la lisait : « Enregistrer le retour », « Terminer le
+// trajet », « État / signalement », la modification et la suppression d'un
+// trajet, « Démarrer » et « Annuler » sur une réservation, et le retrait d'un
+// véhicule ou d'un lieu ne faisaient rien, sans la moindre erreur. Signalé par
+// le champion : impossible de terminer un trajet. Même absence dans
+// registre.html de l'Outil terrain. Les actions de l'écran Comptes ont leur
+// propre écouteur et ne figurent pas dans la table : on les laisse passer.
+document.addEventListener("click", ev => {
+  const el = ev.target.closest && ev.target.closest("[data-action]");
+  if (!el) return;
+  const traiter = actionHandlers[el.dataset.action];
+  if (!traiter) return;
+  ev.preventDefault();
+  Promise.resolve(traiter(el)).catch(e => toast(String((e && e.message) || e), "error"));
+});
+/* ================================================================
+   19) NAVIGATION ONGLETS (souris + clavier, ARIA)
+   ================================================================ */
+function switchTab(name){
+  document.querySelectorAll("nav.tabs button").forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
+  document.querySelectorAll("section[role='tabpanel']").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
+  if (name === "gestionnaire") renderQR();
+}
+function wireTablist(navSelector, panelPrefix, onActivate){
+  const buttons = Array.from(document.querySelectorAll(navSelector + " button"));
+  buttons.forEach((b, i) => {
+    b.addEventListener("click", () => onActivate(b));
+    b.addEventListener("keydown", e => {
+      let idx = null;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") idx = (i + 1) % buttons.length;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") idx = (i - 1 + buttons.length) % buttons.length;
+      else if (e.key === "Home") idx = 0;
+      else if (e.key === "End") idx = buttons.length - 1;
+      if (idx !== null) { e.preventDefault(); buttons[idx].focus(); onActivate(buttons[idx]); }
+    });
+  });
+}
+wireTablist("nav.tabs", "tab-", b => switchTab(b.dataset.tab));
+wireTablist("nav.subtabs", "gtab-", b => {
+  document.querySelectorAll("nav.subtabs button").forEach(x => {
+    const on = x === b;
+    x.classList.toggle("active", on);
+    x.setAttribute("aria-selected", on ? "true" : "false");
+    x.tabIndex = on ? 0 : -1;
+  });
+  document.querySelectorAll(".gpanel").forEach(p => p.classList.toggle("active", p.id === "gtab-" + b.dataset.gtab));
+  if (b.dataset.gtab === "qrcode") renderQR();
+  if (b.dataset.gtab === "comptes") { chargerComptes(); chargerTeams(); }
+});
+
+/* ================================================================
+   GESTION DES COMPTES CHEFS D'ÉQUIPE
+   Ajouté le 31/08/2026. Passe par l'Edge Function `manage-chauffeurs`, qui
+   détient la clé service_role côté serveur et vérifie que l'appelant est
+   bien gestionnaire. Aucune clé d'administration n'est présente ici.
+   ================================================================ */
+
+async function appelerManageChefs(payload){
+  if (!sb) throw new Error("Supabase n'est pas configuré.");
+  const { data: sess } = await sb.auth.getSession();
+  const jeton = sess && sess.session && sess.session.access_token;
+  if (!jeton) throw new Error("Session expirée, reconnectez-vous.");
+  const res = await fetch(SUPABASE_URL + "/functions/v1/manage-chauffeurs", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + jeton
+    },
+    body: JSON.stringify(payload)
+  });
+  const corps = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(corps.error || ("Erreur " + res.status));
+  return corps;
+}
+
+/* Un mot de passe ne se consulte pas : Supabase Auth n'en garde qu'une empreinte
+   bcrypt, irréversible par construction. Le seul recours en cas d'oubli est de
+   le remplacer — d'où « Réinitialiser », qui n'agit que sur la personne visée.
+   Une base où un gestionnaire pourrait relire les mots de passe serait une base
+   où une fuite les livrerait tous. */
+
+/* Liste tenue en mémoire : filtrer à la frappe et pré-remplir un formulaire
+   d'édition ne justifient pas un aller-retour serveur à chaque fois. */
+let comptesCharges = [];
+
+function carteCompte(p){
+  // Trois etats, et non deux. La base parle `chauffeur` / `manager` /
+  // `admin` ; le Registre affichait « gestionnaire » ou « chef d'equipe »
+  // en testant `role === "gestionnaire"`, valeur qui n'existe PAS en base.
+  // Le test etant toujours faux, les huit comptes etaient etiquetes « chef
+  // d'equipe » en production le 07/10/2026 — y compris un gestionnaire et
+  // l'administrateur.
+  //
+  // L'acces au Registre se lit comme dans l'Outil terrain : l'acces nomme
+  // `registre` dans `tabs`, avec `chef_equipe` en repli le temps que la
+  // colonne vive encore.
+  const estGest = p.role === "manager" || p.role === "admin" || p.role === "gestionnaire";
+  const aRegistre = (Array.isArray(p.tabs) && p.tabs.includes("registre")) || !!p.chef_equipe;
+  const libelleRole = estGest ? "gestionnaire" : (aRegistre ? "chef d'\u00e9quipe" : "chauffeur");
+  const moi = !!(monProfil && monProfil.uid === p.uid);
+  return `
+      <div class="trip-card">
+        <div class="trip-meta">
+          ${chipBadge(p.matricule)}
+          <span><b>${esc(nomLocal(p.team) || "—")}</b></span>
+          ${p.team != null ? "<span>Team " + esc(p.team) + "</span>" : ""}
+          <span>${libelleRole}</span>
+          ${p.actif ? "" : "<span>désactivé</span>"}
+          ${moi ? "<span>votre compte</span>" : ""}
+        </div>
+
+        <div class="edit-compte" style="display:none;">
+          <div class="field-row" style="margin-top:12px;">
+            <div class="field">
+              <label>Team</label>
+              <input type="text" data-champ="team" inputmode="numeric" autocomplete="off" placeholder="aucune" value="${p.team != null ? esc(p.team) : ""}">
+            </div>
+            <div class="field">
+              <label>Nouveau mot de passe</label>
+              <input type="text" data-champ="mdp" autocomplete="new-password" placeholder="vide = inchangé">
+            </div>
+            <div class="field">
+              <label>Rôle</label>
+              <select data-champ="role"${moi ? " disabled" : ""}>
+                <option value="chef"${estGest ? "" : " selected"}>Chef d'équipe</option>
+                <option value="gestionnaire"${estGest ? " selected" : ""}>Gestionnaire</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions-row">
+            <button class="primary" data-action="enregistrerCompte" data-uid="${esc(p.uid)}" data-mat="${esc(p.matricule)}">Enregistrer</button>
+            <button class="link" data-action="annulerCompte">Annuler</button>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button class="secondary" data-action="resetCompte" data-uid="${esc(p.uid)}" data-mat="${esc(p.matricule)}">Réinitialiser le mot de passe</button>
+          <button class="secondary" data-action="modifierCompte">Modifier</button>
+          <button class="link" data-action="basculerCompte" data-uid="${esc(p.uid)}" data-actif="${p.actif ? "1" : "0"}">${p.actif ? "Désactiver" : "Réactiver"}</button>
+          ${moi ? "" : `<button class="link" data-action="supprimerCompte" data-uid="${esc(p.uid)}" data-mat="${esc(p.matricule)}">Supprimer</button>`}
+        </div>
+      </div>`;
+}
+
+function rendreComptes(){
+  const cible = document.getElementById("comptesListe");
+  if (!cible) return;
+  const champ = document.getElementById("comptesFiltre");
+  const q = champ ? champ.value.trim() : "";
+  if (!comptesCharges.length) { cible.innerHTML = '<div class="sub">Aucun compte pour le moment.</div>'; return; }
+  const f = q.toLowerCase();
+  const vus = f ? comptesCharges.filter(p => (p.matricule + " " + nomLocal(p.team) + (p.team != null ? " team " + p.team : "")).toLowerCase().includes(f)) : comptesCharges;
+  if (!vus.length) { cible.innerHTML = '<div class="sub">Aucun compte ne correspond à « ' + esc(q) + ' ».</div>'; return; }
+  cible.innerHTML = (f ? '<div class="sub" style="margin-bottom:10px;">' + vus.length + " compte(s) sur " + comptesCharges.length + "</div>" : "")
+    + vus.map(carteCompte).join("");
+}
+
+async function chargerComptes(){
+  const cible = document.getElementById("comptesListe");
+  if (!cible) return;
+  cible.innerHTML = '<div class="sub">Chargement…</div>';
+  try {
+    const { profils } = await appelerManageChefs({ action: "list", limite: 200 });
+    comptesCharges = profils || [];
+    rendreComptes();
+  } catch (e) {
+    comptesCharges = [];
+    cible.innerHTML = '<div class="signal-badge">' + esc(String(e.message || e)) + "</div>";
+  }
+}
+
+const btnRafraichirComptes = document.getElementById("btnRafraichirComptes");
+if (btnRafraichirComptes) btnRafraichirComptes.addEventListener("click", chargerComptes);
+
+// Filtrage local : la liste est déjà en mémoire, aucun appel serveur.
+const comptesFiltre = document.getElementById("comptesFiltre");
+if (comptesFiltre) comptesFiltre.addEventListener("input", rendreComptes);
+
+// Phase de tests : 6 = plancher de Supabase Auth. Doit suivre MDP_MIN dans
+// manage-chauffeurs, qui fait foi. A remonter a 8 avant la production.
+const MDP_MIN = 6;
+
+/* Création — DMS cars, 08/10/2026. Phase de tests : le mot de passe est
+   facultatif, le serveur en génère un simple si le champ est vide. Le serveur
+   refait tous les contrôles ; ceux d'ici ne servent qu'à répondre avant
+   l'aller-retour. */
+const btnCreerCompte = document.getElementById("btnCreerCompte");
+if (btnCreerCompte) btnCreerCompte.addEventListener("click", async () => {
+  const champMat = document.getElementById("nouveauMatricule");
+  const champTeam = document.getElementById("nouvelleTeam");
+  const champMdp = document.getElementById("nouveauMotDePasse");
+  const matricule = champMat.value.trim();
+  const role = document.getElementById("nouveauRole").value;
+  const team = champTeam.value.trim();
+  const motDePasse = champMdp.value.trim();
+  if (!matricule) { toast("Matricule requis.", "error"); champMat.focus(); return; }
+  if (team && !/^\d{1,3}$/.test(team)) { toast("Team : un numéro, par exemple 18.", "error"); champTeam.focus(); return; }
+  if (motDePasse && motDePasse.length < MDP_MIN) { toast("Mot de passe trop court : " + MDP_MIN + " caractères minimum.", "error"); champMdp.focus(); return; }
+  if (role === "gestionnaire" && !(await showConfirm(
+      "Créer " + matricule + " comme GESTIONNAIRE ? Ce compte pourra tout " +
+      "modifier, supprimer des trajets et gérer les comptes."))) return;
+  btnCreerCompte.disabled = true;
+  try {
+    const requete = { action: "create", matricule, role, password: motDePasse };
+    if (team) requete.team = Number(team);
+    if (role === "gestionnaire") requete.groupe = "gestionnaire";
+    const r = await appelerManageChefs(requete);
+    champMat.value = ""; champTeam.value = ""; champMdp.value = "";
+    await showAlert("Compte créé : " + r.matricule + "\nMot de passe : " + r.mot_de_passe);
+    chargerComptes();
+    chargerTeams();
+  } catch (e) {
+    toast(String(e.message || e), "error");
+  } finally {
+    btnCreerCompte.disabled = false;
+  }
+});
+
+// « JEAN DUPONT » -> « Jean Dupont », « PAUL D'ARCY » -> « Paul D'Arcy ».
+function enTitre(s){
+  return s.toLocaleLowerCase("fr").replace(/(^|[\s'’-])(\p{L})/gu, (m, a, b) => a + b.toLocaleUpperCase("fr"));
+}
+
+// Une ligne : « 18;Dupont Jean[;mot de passe] », ou les deux colonnes d'un
+// tableau collé, « Team 18<tab>DUPONT JEAN ». null pour une ligne sans nom.
+function lireLigneTeam(ligne){
+  // Le séparateur après le numéro peut être « ; », une tabulation ou de
+  // simples espaces (tableau recopié depuis un courriel ou une discussion).
+  const m = ligne.match(/^(?:team\s*)?(\d{1,3})(?:\s*[;\t]\s*|\s+|$)(.*)$/i);
+  if (!m) return { erreur: ligne };
+  // « - » ou rien : Team sans chef pour l'instant. Le compte est créé quand
+  // même, sans nom ; il suffira de le compléter le jour où un chef arrive.
+  const [nom, motdepasse] = m[2].split(/;|\t/).map(x => x.trim());
+  const vide = !nom || nom === "-";
+  return { matricule: "team" + Number(m[1]), team: Number(m[1]), nom: vide ? "" : enTitre(nom),
+           motdepasse: motdepasse || "", role: "chef" };
+}
+
+const btnCreerLot = document.getElementById("btnCreerLot");
+if (btnCreerLot) btnCreerLot.addEventListener("click", async () => {
+  const champ = document.getElementById("lotComptes");
+  const sortie = document.getElementById("lotResultat");
+  const lues = champ.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(lireLigneTeam).filter(Boolean);
+  const illisibles = lues.filter(l => l.erreur);
+  if (illisibles.length) {
+    toast("Ligne illisible : « " + illisibles[0].erreur + " ». Format attendu : 18;Dupont Jean", "error");
+    return;
+  }
+  if (!lues.length) { toast("Aucune Team dans la liste.", "error"); return; }
+  btnCreerLot.disabled = true;
+  sortie.innerHTML = '<div class="sub">Création de ' + lues.length + " compte(s) en cours…</div>";
+  try {
+    // Les noms restent ici (nomsLocaux) ; le serveur ne reçoit que Team et identifiant.
+    lues.forEach(l => { if (l.nom) nomsLocaux.set(l.team, l.nom); });
+    const r = await appelerManageChefs({ action: "create_bulk",
+      comptes: lues.map(({ nom, ...sansNom }) => sansNom) });
+    sortie.innerHTML =
+      '<div class="sub">' + r.total_crees + " compte(s) créé(s), " + r.total_echecs + " échec(s).</div>" +
+      (r.echecs || []).map(e => '<div class="signal-badge">' + esc(e.matricule) + " : " + esc(e.raison) + "</div>").join("");
+    if (!r.total_echecs) champ.value = "";
+    const teamDe = new Map(lues.map(l => [l.matricule, l.team]));
+    afficherMdpUneFois("Comptes créés (" + (r.crees || []).length + ")",
+      (r.crees || []).map(c => ({ ...c, team: teamDe.get(c.matricule) })));
+    rendreComptes();
+    chargerComptes();
+    chargerTeams();
+  } catch (e) {
+    sortie.innerHTML = '<div class="signal-badge">' + esc(String(e.message || e)) + "</div>";
+  } finally {
+    btnCreerLot.disabled = false;
+  }
+});
+
+/* Teams et identifiants — DMS cars, 08/10/2026. Une ligne par Team de la plage
+   réglée (onglet Teams), avec son chef s'il en a un, puis les comptes sans
+   Team. AUCUN mot de passe ici : ils ne sont stockés nulle part en clair
+   (table comptes_mdp retirée le 08/10/2026 à l'issue de l'évaluation de
+   maturité). Un mot de passe ne se voit qu'une fois, au moment où il est posé
+   — voir afficherMdpUneFois. */
+let lignesTeams = [];
+
+/* Noms des chefs d'équipe — PSEUDONYMISATION (08/10/2026). La base n'en
+   contient aucun : elle est sur un service non approuvé par l'entreprise. La
+   correspondance Team -> nom vit dans la liste du gestionnaire (OneDrive),
+   lue ici par le navigateur et gardée en mémoire le temps de la page. */
+const nomsLocaux = new Map();
+function nomLocal(team){ return team == null ? "" : (nomsLocaux.get(Number(team)) || ""); }
+
+const fichierNoms = document.getElementById("fichierNoms");
+if (fichierNoms) fichierNoms.addEventListener("change", async () => {
+  const f = fichierNoms.files && fichierNoms.files[0];
+  if (!f) return;
+  const texte = await f.text();
+  let lus = 0;
+  texte.split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(l => {
+    const x = lireLigneTeam(l);
+    if (x && !x.erreur && x.nom) { nomsLocaux.set(x.team, x.nom); lus++; }
+  });
+  fichierNoms.value = "";
+  toast(lus + " nom(s) chargé(s) depuis « " + f.name + " », sans envoi en ligne.");
+  rendreTeams();
+  rendreComptes();
+});
+
+async function chargerTeams(){
+  const cible = document.getElementById("teamsApercu");
+  if (!cible || !sb) return;
+  cible.innerHTML = '<div class="sub">Chargement…</div>';
+  try {
+    const p = await sb.from("profils").select("uid, matricule, nom, role, actif, team");
+    if (p.error) throw p.error;
+    const parTeam = new Map((p.data || []).filter(x => x.team != null).map(x => [x.team, x]));
+    const ligne = (team, x) => ({
+      team: team == null ? "" : String(team),
+      uid: x ? x.uid : "",
+      nom: x ? nomLocal(x.team) : "",
+      identifiant: x ? x.matricule : "",
+      gestionnaire: !!x && (x.role === "manager" || x.role === "admin"),
+      role: !x ? "" : (x.role === "manager" || x.role === "admin") ? "gestionnaire" : "chef d'équipe",
+      actif: !x ? "" : (x.actif ? "oui" : "non"),
+    });
+    const max = Math.max(TEAM_MAX, ...parTeam.keys());
+    lignesTeams = [];
+    for (let n = TEAM_MIN; n <= max; n++) lignesTeams.push(ligne(n, parTeam.get(n)));
+    (p.data || []).filter(x => x.team == null)
+      .sort((a, b) => String(a.matricule).localeCompare(String(b.matricule)))
+      .forEach(x => lignesTeams.push(ligne(null, x)));
+    rendreTeams();
+  } catch (e) {
+    lignesTeams = [];
+    cible.innerHTML = '<div class="signal-badge">' + esc(String(e.message || e)) + "</div>";
+  }
+}
+
+const styleCellule = 'style="padding:6px 10px;border-bottom:1px solid var(--navy-2);text-align:left;white-space:nowrap;"';
+function tableau(entetes, lignes){
+  return '<table style="border-collapse:collapse;width:100%;font-size:14px;"><thead><tr>' +
+    entetes.map(h => "<th " + styleCellule + ">" + h + "</th>").join("") + "</tr></thead><tbody>" +
+    lignes.map(l => "<tr>" + l.map(c => "<td " + styleCellule + ">" + c + "</td>").join("") + "</tr>").join("") +
+    "</tbody></table>";
+}
+
+function rendreTeams(){
+  const cible = document.getElementById("teamsApercu");
+  const avecCompte = lignesTeams.filter(l => l.team && l.identifiant).length;
+  const nommees = lignesTeams.filter(l => l.team && l.nom).length;
+  const plage = lignesTeams.filter(l => l.team).length;
+  cible.innerHTML =
+    '<div class="sub" style="margin-bottom:10px;">' + avecCompte + " Team(s) sur " + plage + " ont un compte" +
+    (nomsLocaux.size ? ", " + nommees + " ont un chef nommé dans votre liste." : " — noms non chargés.") + "</div>" +
+    tableau(["Team", "Chef d'équipe", "Identifiant", "Rôle", "Actif"], lignesTeams.map(l => [
+      esc(l.team || "—"),
+      l.nom ? esc(l.nom) : '<span class="sub">' + (!l.identifiant ? "— pas de compte —" : nomsLocaux.size ? "— aucun nom —" : "—") + "</span>",
+      "<code>" + esc(l.identifiant) + "</code>", esc(l.role), esc(l.actif)]));
+}
+
+// CSV au point-virgule, avec BOM : Excel en français l'ouvre en colonnes et
+// garde les accents. Construit dans le navigateur, jamais envoyé au serveur.
+function telechargerCsv(nomFichier, lignes){
+  const cellule = v => /[;"\r\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  const csv = "﻿" + lignes.map(r => r.map(cellule).join(";")).join("\r\n");
+  const lien = document.createElement("a");
+  lien.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  lien.download = nomFichier;
+  document.body.appendChild(lien);
+  lien.click();
+  setTimeout(() => { URL.revokeObjectURL(lien.href); lien.remove(); }, 0);
+}
+
+function exporterTeams(){
+  if (!lignesTeams.length) { toast("Rien à exporter : chargez d'abord le tableau.", "error"); return; }
+  telechargerCsv("dms-cars-teams-" + new Date().toISOString().slice(0, 10) + ".csv",
+    [["Team", "Chef d'équipe", "Identifiant", "Rôle", "Actif"]]
+      .concat(lignesTeams.map(l => [l.team, l.nom, l.identifiant, l.role, l.actif])));
+}
+
+/* Mots de passe tout juste posés : affichés UNE fois, téléchargeables tant que
+   la page reste ouverte, puis perdus — c'est voulu. Fermer avec « Masquer ». */
+function afficherMdpUneFois(titre, liste){
+  const cible = document.getElementById("mdpUneFois");
+  if (!cible) return;
+  const tri = liste.slice().sort((a, b) => (a.team ?? 9999) - (b.team ?? 9999) || String(a.matricule).localeCompare(String(b.matricule)));
+  cible.style.display = tri.length ? "block" : "none";
+  if (!tri.length) return;
+  cible.innerHTML =
+    "<h3>" + esc(titre) + "</h3>" +
+    '<p class="note" style="margin-top:0;">Affichés une seule fois : ils ne sont conservés nulle part. ' +
+    "Téléchargez le fichier, distribuez les mots de passe, puis supprimez le fichier.</p>" +
+    '<div class="add-row"><button class="primary" id="btnMdpCsv">Télécharger (CSV)</button>' +
+    '<button class="link" id="btnMdpMasquer">Masquer</button></div>' +
+    '<div style="overflow-x:auto;">' +
+    tableau(["Team", "Chef d'équipe", "Identifiant", "Mot de passe"], tri.map(x => [
+      esc(x.team ?? "—"), esc(nomLocal(x.team) || "—"), "<code>" + esc(x.matricule) + "</code>", "<code>" + esc(x.mot_de_passe) + "</code>"])) +
+    "</div>";
+  document.getElementById("btnMdpCsv").addEventListener("click", () =>
+    telechargerCsv("dms-cars-mots-de-passe-" + new Date().toISOString().slice(0, 10) + ".csv",
+      [["Team", "Chef d'équipe", "Identifiant", "Mot de passe"]]
+        .concat(tri.map(x => [x.team ?? "", nomLocal(x.team), x.matricule, x.mot_de_passe]))));
+  document.getElementById("btnMdpMasquer").addEventListener("click", () => { cible.innerHTML = ""; cible.style.display = "none"; });
+  cible.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function regenererMdpChefs(){
+  if (!lignesTeams.length) await chargerTeams();
+  const chefs = lignesTeams.filter(l => l.uid && !l.gestionnaire);
+  if (!chefs.length) { toast("Aucun compte de chef d'équipe.", "error"); return; }
+  if (!(await showConfirm("Poser un NOUVEAU mot de passe sur les " + chefs.length + " comptes de chef d'équipe ? " +
+      "Les mots de passe actuels cesseront de fonctionner immédiatement."))) return;
+  const bouton = document.getElementById("btnRegenererMdp");
+  bouton.disabled = true;
+  try {
+    const r = await appelerManageChefs({ action: "reset_bulk", uids: chefs.map(l => l.uid) });
+    afficherMdpUneFois("Nouveaux mots de passe (" + r.faits.length + ")", r.faits);
+    if (r.echecs && r.echecs.length) toast(r.echecs.length + " compte(s) non réinitialisé(s) : " + r.echecs.map(e => e.matricule).join(", "), "warn");
+  } catch (e) {
+    toast(String(e.message || e), "error");
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+const btnRafraichirTeams = document.getElementById("btnRafraichirTeams");
+if (btnRafraichirTeams) btnRafraichirTeams.addEventListener("click", chargerTeams);
+const btnExporterTeams = document.getElementById("btnExporterTeams");
+if (btnExporterTeams) btnExporterTeams.addEventListener("click", exporterTeams);
+const btnRegenererMdp = document.getElementById("btnRegenererMdp");
+if (btnRegenererMdp) btnRegenererMdp.addEventListener("click", regenererMdpChefs);
+
+document.getElementById("comptesListe").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-action]");
+  if (!b) return;
+  try {
+    if (b.dataset.action === "resetCompte") {
+      const saisi = await showPrompt(
+        "Nouveau mot de passe de " + b.dataset.mat + " — laisser vide pour en générer un.",
+        MDP_MIN + " caractères minimum, ou vide");
+      if (saisi === null) return;                       // annulé
+      const choisi = saisi.trim();
+      if (choisi && choisi.length < MDP_MIN) {
+        toast("Mot de passe trop court : " + MDP_MIN + " caractères minimum.", "error");
+        return;
+      }
+      const r = await appelerManageChefs({ action: "reset", uid: b.dataset.uid, password: choisi });
+      await showAlert("Nouveau mot de passe pour " + b.dataset.mat + " :\n\n" + r.mot_de_passe +
+                      "\n\nNotez-le maintenant : il ne sera plus affiché.");
+      chargerTeams();
+    }
+    if (b.dataset.action === "basculerCompte") {
+      const actif = b.dataset.actif === "1";
+      await appelerManageChefs({ action: "update", uid: b.dataset.uid, actif: !actif });
+      toast(actif ? "Compte désactivé." : "Compte réactivé.");
+      chargerComptes();
+    }
+    if (b.dataset.action === "modifierCompte") {
+      const carte = b.closest(".trip-card");
+      carte.querySelector(".edit-compte").style.display = "block";
+      b.closest(".actions-row").style.display = "none";
+      carte.querySelector('[data-champ="team"]').focus();
+    }
+    if (b.dataset.action === "annulerCompte") {
+      rendreComptes();                                  // rien n'a été envoyé : on redessine
+    }
+    if (b.dataset.action === "enregistrerCompte") {
+      const carte = b.closest(".trip-card");
+      const selRole = carte.querySelector('[data-champ="role"]');
+      const avant = comptesCharges.find(p => p.uid === b.dataset.uid);
+      // Le rôle est verrouillé sur son propre compte : le serveur refuse de
+      // toute façon qu'un gestionnaire se rétrograde et se ferme la porte.
+      const role = selRole.disabled ? undefined : selRole.value;
+      if (role === "gestionnaire" && avant && avant.role !== "gestionnaire" && !(await showConfirm(
+          "Donner le rôle GESTIONNAIRE à " + b.dataset.mat + " ? Ce compte pourra tout " +
+          "modifier, supprimer des trajets et gérer les comptes."))) return;
+      const team = carte.querySelector('[data-champ="team"]').value.trim();
+      const nouveauMdp = carte.querySelector('[data-champ="mdp"]').value.trim();
+      if (nouveauMdp && nouveauMdp.length < MDP_MIN) { toast("Mot de passe trop court : " + MDP_MIN + " caractères minimum.", "error"); return; }
+      if (team && !/^\d{1,3}$/.test(team)) { toast("Team : un numéro, par exemple 18.", "error"); return; }
+      const requete = { action: "update", uid: b.dataset.uid, team: team ? Number(team) : null };
+      if (role !== undefined) requete.role = role;
+      await appelerManageChefs(requete);
+      if (nouveauMdp) await appelerManageChefs({ action: "reset", uid: b.dataset.uid, password: nouveauMdp });
+      toast("Compte " + b.dataset.mat + " modifié" + (nouveauMdp ? ", mot de passe changé." : "."));
+      chargerComptes();
+      chargerTeams();
+    }
+    if (b.dataset.action === "supprimerCompte") {
+      // Suppression définitive du compte : on fait retaper le matricule plutôt
+      // qu'un simple « Confirmer », qu'on clique sans lire. Les trajets et
+      // réservations restent au registre, leur auteur passe à NULL.
+      const saisi = await showPrompt(
+        "Supprimer définitivement le compte " + b.dataset.mat + " ? Ses trajets restent " +
+        "au registre. Tapez le matricule pour confirmer.", b.dataset.mat);
+      if (saisi === null) return;
+      if (saisi.trim() !== b.dataset.mat) { toast("Matricule non confirmé : rien n'a été supprimé.", "error"); return; }
+      await appelerManageChefs({ action: "delete", uid: b.dataset.uid });
+      toast("Compte " + b.dataset.mat + " supprimé.");
+      chargerComptes();
+    }
+  } catch (e) { toast(String(e.message || e), "error"); }
+});
+
+/* ================================================================
+   20) DURÉES LIVE + SYNCHRONISATION SERVEUR
+   ================================================================ */
+setInterval(() => {
+  document.querySelectorAll("[data-duree]").forEach(el => {
+    const t = trips.find(t => t.id === el.dataset.duree);
+    if (t) el.textContent = durationSince(t.heureDepart);
+  });
+}, 30000);
+
+async function syncFromServer(){
+  if (!sb || !loaded) return;
+  if (isOffline() || pendingCount() > 0) return; // ne pas écraser des écritures locales en attente
+  try {
+    const [v, l, s, tr, re, rt] = await Promise.all([
+      sb.from("vehicules").select("*"),
+      sb.from("lieux").select("*"),
+      sb.from("settings").select("value").eq("key","team_range").maybeSingle(),
+      sb.from("trips").select("*"),
+      sb.from("reservations").select("*"),
+      sb.from("settings").select("value").eq("key","retention").maybeSingle()
+    ]);
+    if (rt && !rt.error && rt.data && rt.data.value && Number.isFinite(Number(rt.data.value.mois))) {
+      const m = Number(rt.data.value.mois);
+      if (m !== RETENTION_MOIS) { RETENTION_MOIS = m; afficherRetention(); }
+    }
+    if (!v.error && v.data) {
+      const rows = v.data.map(r => ({ id:r.id, plaque:r.plaque }));
+      if (JSON.stringify(rows) !== JSON.stringify(vehiculesRows)) {
+        vehiculesRows = rows; vehicules = rows.map(r => r.plaque).sort((a,b)=>a.localeCompare(b));
+        cacheSet("vehicules", v.data); renderPlaqueSelect(); renderResaPlaqueSelect(); renderGestionVehicules();
+      }
+    }
+    if (!l.error && l.data && l.data.length) {
+      const rows = l.data.map(r => ({ id:r.id, nom:r.nom }));
+      if (JSON.stringify(rows.map(r=>r.nom)) !== JSON.stringify(LIEUX)) {
+        lieuxRows = rows; LIEUX = rows.map(r => r.nom);
+        cacheSet("lieux", l.data); refreshAllLieuxSelects(); renderGestionLieux();
+      }
+    }
+    if (!s.error && s.data && s.data.value) {
+      const val = s.data.value;
+      if (val.min !== TEAM_MIN || val.max !== TEAM_MAX) {
+        TEAM_MIN = val.min; TEAM_MAX = val.max; cacheSet("team_range", val);
+        renderChauffeurSelect(); renderResaChauffeurSelect(); renderGestionChauffeurs(); renderHistory();
+      }
+    }
+    if (!tr.error && tr.data) {
+      const mapped = tr.data.map(tripFromRow);
+      if (JSON.stringify(mapped) !== JSON.stringify(trips)) { trips = mapped; cacheSet("trips", tr.data); pruneOld(); renderAll(); }
+    }
+    if (!re.error && re.data) {
+      const mapped = re.data.map(resaFromRow);
+      if (JSON.stringify(mapped) !== JSON.stringify(reservations)) { reservations = mapped; cacheSet("reservations", re.data); pruneExpiredReservations(); renderReservations(); }
+    }
+  } catch { /* réseau : on réessaiera */ }
+}
+setInterval(syncFromServer, 20000);
+
+/* ================================================================
+   21) CODE QR DU MODULE — revu le 23/09/2026
+   ================================================================
+   Le 22/09 chaque véhicule avait son code QR. Le raisonnement ne tenait pas :
+   le scan n'évite pas la connexion, et une fois connecté, choisir sa plaque
+   dans la liste est une tape. On payait quinze étiquettes à coller et à
+   suivre, et un jeton à réémettre à chaque réimmatriculation, pour économiser
+   cette tape. Tout cela est retiré.
+
+   Reste ce qui a du sens : UNE affiche pour ce module, à mettre au mur du
+   dépôt. Elle ouvre l'Outil terrain sur le Registre après connexion, ne se
+   périme jamais et ne demande aucun suivi. Les deux affiches (Registre et
+   voiture de relève) s'impriment depuis l'onglet Flotte de l'espace
+   gestionnaire ; celle-ci est le raccourci local. */
+let qrRendered = false;
+
+// L'affiche doit ouvrir l'APPLICATION, pas cette sous-page : c'est elle qui
+// sait aiguiller après connexion. On remonte donc de /registre/ vers la racine.
+// Hors http(s) — fichier ouvert localement — `origin` vaut la chaîne "null" et
+// l'affiche encoderait une adresse absurde : on ne produit alors rien.
+function qrAdresseModule(){
+  if (!/^https?:$/.test(window.location.protocol)) return null;
+  const base = window.location.pathname.replace(/registre\/(index\.html)?$/, "");
+  return window.location.origin + base + "?m=registre";
+}
+
+function qrSvg(texte, taille){
+  try {
+    if (!texte || typeof qrcode !== "function") return "";
+    const q = qrcode(0, "M");
+    q.addData(texte);
+    q.make();
+    const n = q.getModuleCount(), marge = 2, total = n + marge * 2;
+    let d = "";
+    for (let r = 0; r < n; r++)
+      for (let c = 0; c < n; c++)
+        if (q.isDark(r, c)) d += "M" + (c + marge) + " " + (r + marge) + "h1v1h-1z";
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + taille + '" height="' + taille +
+           '" viewBox="0 0 ' + total + " " + total + '" shape-rendering="crispEdges">' +
+           '<rect width="' + total + '" height="' + total + '" fill="#ffffff"/>' +
+           '<path d="' + d + '" fill="#1d3d52"/></svg>';
+  } catch { return ""; }
+}
+
+function renderQR(){
+  if (qrRendered) return;
+  const el = document.getElementById("qrcode");
+  if (!el) return;
+  const svg = qrSvg(qrAdresseModule(), 150);
+  if (!svg) {
+    el.innerHTML = '<div style="padding:12px;font-size:12px;color:#55707f;max-width:170px;line-height:1.5;">' +
+      "Code non affiché : cette page n'est pas ouverte depuis l'adresse du site.</div>";
+    return;
+  }
+  qrRendered = true;
+  el.innerHTML = svg;
+}
+
+/* ================================================================
+   22) INITIALISATION
+   ================================================================ */
+async function init(){
+  updateNetBar();
+  if (!SUPABASE_READY) {
+    document.getElementById("storageNote").textContent =
+      "⚠ Supabase n'est pas configuré : renseignez SUPABASE_URL et SUPABASE_ANON_KEY en haut du fichier. L'appli fonctionne en mode local hors-ligne en attendant.";
+  }
+  await loadVehicules();
+  await loadChauffeurs();
+  await loadLieux();
+  await loadReservations();
+  await loadTrips();
+  renderQR();
+  flushQueue();
+}
+init();
+</script>
+</body>
+</html>
